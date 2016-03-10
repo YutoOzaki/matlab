@@ -1,13 +1,6 @@
-function MFCC(x,fs,hprms,label)
+function MFCC(x,hprms,label)
     %% get hyperparameters
-    mfb_type    = hprms.mfb_type;
-    f_start     = hprms.f_start;
-    f_end       = hprms.f_end;
-    coefnum     = hprms.coefnum;
     coef_range  = hprms.coef_range;
-    unitpow     = hprms.unitpow;
-    liftering   = hprms.liftering;
-    liftcoef    = hprms.liftcoef;
     mfbc        = hprms.mfbc;
     d           = hprms.d;
     dd          = hprms.dd;
@@ -20,27 +13,7 @@ function MFCC(x,fs,hprms,label)
     normalize   = hprms.normalize;
     zcaeps      = hprms.zcaeps;
     
-    %% calculate internal parameters
-    FFTL = 2^nextpow2(N);
-    FFTL_half = 1:(floor(FFTL/2) + 1);
-
-    if liftering == 1
-        ceplifter = 1 + (liftcoef/2)*sin(pi*(1:coef)'/liftcoef);
-    elseif liftering == 2
-        a = liftcoef(1);
-        tau = liftcoef(2);
-        ceplifter = ((1:coef).^a).*exp(-((1:coef).^2)./(2*tau^2));
-    else
-        ceplifter = ones(coef,1);
-    end
-
-    %% get filter bank
-    if mfb_type == 1
-        trifil = triangularFB(coefnum,f_start,f_end,FFTL,unitpow);
-    else
-        trifil = mfccFB40(FFTL,f_s);
-        trifil = trifil(FFTL_half,:)';
-    end
+    ceplifter   = hprms.ceplifter;
 
     %% get block-wise features
     [testMat,testLabel,testSourceInfo] = blockWiseMFCC(testURL,mapObj,coef_range,blocks,patch,N,M,preemp,w,trifil,ceplifter,isdct);
