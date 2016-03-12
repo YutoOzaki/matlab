@@ -25,5 +25,9 @@ AudioFeatureExtraction(trainData,hprms);
 AudioFeatureExtraction(validData,hprms);
 AudioFeatureExtraction(testData,hprms);
 
+%% save parameters
+%save(fileName,'trainMat','trainLabel','testMat','testLabel','trainSourceInfo','testSourceInfo');
+%save(strcat(fileName,'_meta'),'mu','stdev','V','D');
+
 %% diary off
 diary off

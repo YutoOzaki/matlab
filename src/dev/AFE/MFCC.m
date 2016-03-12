@@ -1,4 +1,4 @@
-function MFCC(x,hprms,label)
+function [blockWiseMFCC,patchInfo] = MFCC(x,hprms)
     %% get hyperparameters
     coef_range  = hprms.coef_range;
     mfbc        = hprms.mfbc;
@@ -7,50 +7,87 @@ function MFCC(x,hprms,label)
     N           = hprms.N;
     M           = hprms.M;
     preemp      = hprms.preemp;
-    w           = hprms.w;
+    w_z         = hprms.w_z;
     blocks      = hprms.blocks;
     patch       = hprms.patch;
     normalize   = hprms.normalize;
     zcaeps      = hprms.zcaeps;
     
+    melfilbank  = hprms.melfilbank;
     ceplifter   = hprms.ceplifter;
+    FFTL        = hprms.FFTL;
+    FFTL_half   = hprms.FFTL_half;
+    ACF         = hprms.ACF;
+    CF          = hprms.CF;
+    dim         = hprms.dim;
+    
+    blockWiseMFCC = zeros(dim,patch,blocks);
+    patchInfo = zeros(2,patch);
+    
+    %% main loop
+    L = length(x);
+    rnd_start = randperm(L - (FFTL+(blocks-1)*M) + 1);
 
-    %% get block-wise features
-    [testMat,testLabel,testSourceInfo] = blockWiseMFCC(testURL,mapObj,coef_range,blocks,patch,N,M,preemp,w,trifil,ceplifter,isdct);
-    [trainMat,trainLabel,trainSourceInfo] = blockWiseMFCC(trainURL,mapObj,coef_range,blocks,patch,N,M,preemp,w,trifil,ceplifter,isdct);
+    i = 1;
+    patchCounter = 1;
+    while patchCounter <= patch        
+        N_start = rnd_start(i);
+        N_end = N_start + N - 1;
+        vec2frame = zeros(FFTL,blocks);
+        patchInfo(1,patchCounter) = N_start;
+        
+        k = 1;
+        while k <= blocks
+            frame = x(N_start:N_end);
 
-    %% Data normalization
-    mu = []; stdev = []; V = []; D = [];
+            if isinf(log(sum(frame.^2)/N)) == 0
+                vec2frame(1:N,k) = frame;
+                N_start = N_start + M;
+                N_end = N_start + N - 1;
 
-    if normalize(1) == 1
-        mu = mean(trainMat,2);
-        trainMat = trainMat - repmat(mu,1,length(trainLabel));
-        testMat = testMat - repmat(mu,1,length(testLabel));
+                k = k + 1;
+            else
+                k = 1;
+                i = i + 1;              
+                N_start = rnd_start(i);
+                N_end = N_start + N - 1;
+                patchInfo(1,patchCounter) = N_start;
+            end
+        end
+        i = i + 1;
+        patchInfo(2,patchCounter) = N_end;
+
+        %% Energy
+        logE = log(sum(vec2frame.^2)/N);
+
+        %% Pre-emphasis
+        s_pe = filter(preemp,1,vec2frame);
+        s_pe = s_pe ./ ACF;
+
+        %% FFT
+        s_w = diag(w_z) * s_pe;
+        bin = fft(s_w,FFTL);
+        bin = abs(bin).*CF;
+
+        %% Mel-filtering
+        fbank = melfilbank * bin(FFTL_half,:);
+        f = log(fbank);
+
+        %% Get cepstrum coefficients
+        if mfbc
+            C = f;
+        else
+            C = dct(f);
+            C(1,:) = logE;
+            %C(1,:) = C(1,:) * sqrt(coefnum);
+            %C(2:coefnum,:) = C(2:coefnum,:) .* sqrt(coefnum/2);
+
+            C = diag(ceplifter) * C;
+        end
+        C = C(coef_range,:);
+        
+        %% store result
+        blockWiseMFCC(:,patchCounter,:) = C;
+        patchCounter = patchCounter + 1;
     end
-
-    if normalize(2) == 1
-        stdev = std(trainMat,1,2);
-        trainMat = trainMat./repmat(stdev,1,length(trainLabel)); 
-        testMat = testMat./repmat(stdev,1,length(testLabel)); 
-    end
-
-    if normalize(3) == 1
-        C = cov(trainMat');
-        [V,D] = eig(C);
-        ZCA = V*diag(diag(D+zcaeps).^(-0.5))*V';
-
-        trainMat = ZCA * trainMat;
-        testMat = ZCA * testMat;
-
-        figure(2);
-        subplot(311);surf(ZCA,'LineStyle','None','EdgeColor','None');view(0,90);colormap gray
-        C_zca = cov(trainMat');
-        subplot(312);surf(C_zca,'LineStyle','None','EdgeColor','None');view(0,90);colormap gray
-        T_zca = cov(testMat');
-        subplot(313);surf(T_zca,'LineStyle','None','EdgeColor','None');view(0,90);colormap gray
-    end  
-
-    %% Save result
-    save(fileName,'trainMat','trainLabel','testMat','testLabel','trainSourceInfo','testSourceInfo');
-    save(strcat(fileName,'_meta'),'mu','stdev','V','D');
 end

@@ -1,4 +1,4 @@
-function [trifil,cbin] = triangularFB(coefnum,f_start,f_end,FFTL,unitpow)
+function [trifil,cbin] = triangularFB(coefnum,f_start,f_end,FFTL,f_s,unitpow)
     %F = (0:FFTL/2)/FFTL*f_s;    
     cbin = zeros(coefnum+2,1);
     

@@ -1,4 +1,4 @@
-function [dataMat,dataLabel] = AudioFeatureExtraction(dataSet,hprms)    
+function [dataMat,dataLabel,sourceInfo] = AudioFeatureExtraction(dataSet,hprms)    
     %% read hyperparameters
     method      = hprms.method;
     checkfs     = hprms.checkfs;
@@ -8,6 +8,7 @@ function [dataMat,dataLabel] = AudioFeatureExtraction(dataSet,hprms)
     samples     = length(path);
     
     featureExtractor = cell(1,1);
+    sourceInfo  = cell(samples,2);
     
     %% implement audio feature extractor
     if strcmp(method,'MFCC')
@@ -29,6 +30,7 @@ function [dataMat,dataLabel] = AudioFeatureExtraction(dataSet,hprms)
         
         dataMat     = zeros(dim,samples*patch,blocks);
         dataLabel   = zeros(1,samples*patch,blocks);
+        hprms.dim   = dim;
         
         %% liftering vector
         liftcoef    = hprms.liftcoef;
@@ -51,14 +53,22 @@ function [dataMat,dataLabel] = AudioFeatureExtraction(dataSet,hprms)
         FFTL        = 2^nextpow2(hprms.N);
         FFTL_half   = 1:(floor(FFTL/2) + 1);
         if mfb_type == 1
-            hprms.melfilbank = triangularFB(coefnum,f_start,f_end,FFTL,unitpow);
+            hprms.melfilbank = triangularFB(coefnum,f_start,f_end,FFTL,checkfs,unitpow);
         else
             melfilbank = mfccFB40(FFTL);
             hprms.melfilbank = melfilbank(FFTL_half,:)';
         end
+        hprms.FFTL  = FFTL;
+        hprms.FFTL_half  = FFTL_half;
     
         %% window function
-        hprms.w     = hprms.w(hprms.N);
+        w           = hprms.w(hprms.N);
+        hprms.w_z   = [w; zeros(FFTL - hprms.N,1)];
+        
+        %% FFT normalization
+        hprms.ACF = sum(w)/FFTL;
+        ENBWCF = sum(w.*w)/(sum(w)^2) * FFTL;
+        hprms.CF = 1/sqrt(ENBWCF*FFTL^2);
     elseif strcmp(method,'CR')
         featureExtractor{1} = @CR;
     end
@@ -71,11 +81,14 @@ function [dataMat,dataLabel] = AudioFeatureExtraction(dataSet,hprms)
         
         [x,fs] = audioread(path{i});
         if fs ~= checkfs
-            warning(' Unexpected sampling frequency (%d)',fs);
+            warning(' Unexpected sampling frequency (%d)',fs);                
         end
         
         idx = (i-1)*patch+1:i*patch;
         dataLabel(1,idx,:) = label(i);
-        %dataMat(:,idx,:) = featureExtractor{1}(x,hprms);
+        [dataBuf,auxInfo] = featureExtractor{1}(x,hprms);
+        dataMat(:,idx,:) = dataBuf;
+        sourceInfo{i,1} = pathBuf{end};
+        sourceInfo{i,2} = auxInfo;
     end
 end
