@@ -10,7 +10,6 @@ function [blockWiseMFCC,patchInfo] = MFCC(x,hprms)
     w_z         = hprms.w_z;
     blocks      = hprms.blocks;
     patch       = hprms.patch;
-    normalize   = hprms.normalize;
     
     melfilbank  = hprms.melfilbank;
     ceplifter   = hprms.ceplifter;
@@ -21,7 +20,22 @@ function [blockWiseMFCC,patchInfo] = MFCC(x,hprms)
     dim         = hprms.dim;
     
     blockWiseMFCC = zeros(dim,patch,blocks);
-    patchInfo = zeros(2,patch);
+    patchInfo   = zeros(2,patch);
+    
+    %% delta MFCC
+    if d > 0
+        dnmt_d = sum((1:d).^2);
+        dmfcc = @deltaMFCC./dnmt_d;
+    else
+        dmfcc = @(a,b,c) [];
+    end
+    
+    if dd > 0
+        dnmt_dd = sum((1:dd).^2);
+        ddmfcc = @deltaMFCC./dnmt_dd;
+    else
+        ddmfcc = @(a,b,c) [];
+    end
     
     %% main loop
     L = length(x);
@@ -29,7 +43,7 @@ function [blockWiseMFCC,patchInfo] = MFCC(x,hprms)
 
     i = 1;
     patchCounter = 1;
-    while patchCounter <= patch        
+    while patchCounter <= patch
         N_start = rnd_start(i);
         N_end = N_start + N - 1;
         vec2frame = zeros(FFTL,blocks);
@@ -56,23 +70,23 @@ function [blockWiseMFCC,patchInfo] = MFCC(x,hprms)
         i = i + 1;
         patchInfo(2,patchCounter) = N_end;
 
-       %% Energy
+        %% Energy
         logE = log(sum(vec2frame.^2)/N);
 
-       %% Pre-emphasis
+        %% Pre-emphasis
         s_pe = filter(preemp,1,vec2frame);
         s_pe = s_pe ./ ACF;
 
-       %% FFT
+        %% FFT
         s_w = diag(w_z) * s_pe;
         bin = fft(s_w,FFTL);
         bin = abs(bin).*CF;
 
-       %% Mel-filtering
+        %% Mel-filtering
         fbank = melfilbank * bin(FFTL_half,:);
         f = log(fbank);
 
-       %% Get cepstrum coefficients
+        %% Get cepstrum coefficients
         if mfbc
             C = f;
         else
@@ -85,13 +99,13 @@ function [blockWiseMFCC,patchInfo] = MFCC(x,hprms)
         end
         C = C(coef_range,:);
         
-        %% normalization
-        
         %% delta coefficients
+        delta = dmfcc(C,d,blocks);
+        deltadelta = ddmfcc(delta,dd,blocks);
+        bufbwm = [C;delta;deltadelta];
         
-        
-       %% store result
-        blockWiseMFCC(:,patchCounter,:) = C;
+        %% store result
+        blockWiseMFCC(:,patchCounter,:) = bufbwm;
         patchCounter = patchCounter + 1;
     end
 end
@@ -110,4 +124,8 @@ subplot(411); plot(bin(FFTL_half,i));
 subplot(412); plot(fbank(:,i));
 subplot(413); plot(f(:,i));
 subplot(414); plot(C(:,i));
+
+%% final output
+figure(3)
+plot(bufbwm(:,i));
 %}
