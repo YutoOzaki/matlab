@@ -11,7 +11,6 @@ function [blockWiseMFCC,patchInfo] = MFCC(x,hprms)
     blocks      = hprms.blocks;
     patch       = hprms.patch;
     normalize   = hprms.normalize;
-    zcaeps      = hprms.zcaeps;
     
     melfilbank  = hprms.melfilbank;
     ceplifter   = hprms.ceplifter;
@@ -57,23 +56,23 @@ function [blockWiseMFCC,patchInfo] = MFCC(x,hprms)
         i = i + 1;
         patchInfo(2,patchCounter) = N_end;
 
-        %% Energy
+       %% Energy
         logE = log(sum(vec2frame.^2)/N);
 
-        %% Pre-emphasis
+       %% Pre-emphasis
         s_pe = filter(preemp,1,vec2frame);
         s_pe = s_pe ./ ACF;
 
-        %% FFT
+       %% FFT
         s_w = diag(w_z) * s_pe;
         bin = fft(s_w,FFTL);
         bin = abs(bin).*CF;
 
-        %% Mel-filtering
+       %% Mel-filtering
         fbank = melfilbank * bin(FFTL_half,:);
         f = log(fbank);
 
-        %% Get cepstrum coefficients
+       %% Get cepstrum coefficients
         if mfbc
             C = f;
         else
@@ -86,8 +85,29 @@ function [blockWiseMFCC,patchInfo] = MFCC(x,hprms)
         end
         C = C(coef_range,:);
         
-        %% store result
+        %% normalization
+        
+        %% delta coefficients
+        
+        
+       %% store result
         blockWiseMFCC(:,patchCounter,:) = C;
         patchCounter = patchCounter + 1;
     end
 end
+
+%% debugging
+%{
+i = randi(blocks);
+%% time domain
+figure(1)
+subplot(211); plot(vec2frame(:,i));
+subplot(212); plot(s_w(:,i));
+
+%% frequency domain
+figure(2)
+subplot(411); plot(bin(FFTL_half,i));
+subplot(412); plot(fbank(:,i));
+subplot(413); plot(f(:,i));
+subplot(414); plot(C(:,i));
+%}

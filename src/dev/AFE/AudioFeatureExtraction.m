@@ -18,7 +18,7 @@ function [dataMat,dataLabel,sourceInfo] = AudioFeatureExtraction(dataSet,hprms)
         coefnum     = hprms.coefnum;
         dim         = length(hprms.coef_range);
         d           = hprms.d;
-        dd          = hprms.d;
+        dd          = hprms.dd;
         blocks      = hprms.blocks;
         patch       = hprms.patch;
         
@@ -29,7 +29,7 @@ function [dataMat,dataLabel,sourceInfo] = AudioFeatureExtraction(dataSet,hprms)
         end
         
         dataMat     = zeros(dim,samples*patch,blocks);
-        dataLabel   = zeros(1,samples*patch,blocks);
+        dataLabel   = zeros(1,samples*patch);
         hprms.dim   = dim;
         
         %% liftering vector
@@ -85,7 +85,7 @@ function [dataMat,dataLabel,sourceInfo] = AudioFeatureExtraction(dataSet,hprms)
         end
         
         idx = (i-1)*patch+1:i*patch;
-        dataLabel(1,idx,:) = label(i);
+        dataLabel(1,idx) = label(i);
         [dataBuf,auxInfo] = featureExtractor{1}(x,hprms);
         dataMat(:,idx,:) = dataBuf;
         sourceInfo{i,1} = pathBuf{end};
