@@ -1,338 +1,206 @@
-function DRNN(name,hprms)
-    %% home directory
-    home = userpath;
-    home = home(1:end-1);
-    
-    %% enable to collect log
-    diary off
-    timeStamp = clock;
-    timeStr = '';
-    for i=1:length(timeStamp)-1
-        if i~= 1
-            timeBuf = num2str(timeStamp(i),'%02i');
-        else
-            timeBuf = num2str(timeStamp(i));
-        end
-        timeStr = strcat(timeStr,timeBuf);
-    end
-    diary(strcat(home,'/logs/',name,'/',name,'_',timeStr,'.txt'));
-    clear timeStamp timeBuf i
-
-    %% Read and show hyper-parameters    
-    nhid         = hprms.nhid;
-    units        = hprms.units;
-    optimization = hprms.optimization;
-    batchSize    = hprms.batchSize;
-    baselr       = hprms.baselr;
-    epochs       = hprms.epochs;
-    drate        = hprms.drate;
-    droprate     = hprms.droprate;
-    gcheck       = hprms.gcheck;
-    dataPrep     = hprms.dataPrep;
-    patch        = hprms.patch;
-    
-    disp(hprms);
-    disp(dataPrep);
-    clear hprms
-
+function DRNN()
     %% load data
-    [trainMat,testMat,trainLabel,testLabel] = dataPrep();
-    samples = size(trainMat,2); testSamples = size(testMat,2); T = size(trainMat,3);
-
-    %% validation
-    assert(length(nhid)==length(units),...
-        'number of units must agree');
-    assert(length(unique(trainLabel))==nhid{end},...
-        'number of training class must agree');
-    assert(length(unique(testLabel))==nhid{end},...
-        'number of testing class must agree');
-    assert(size(trainMat,1)==size(testMat,1),...
-        'number of dimension must agree');
-    assert(mod(samples,batchSize)==0,...
-        'batch size should be divisible with the training sample size');
-    assert(mod(testSamples,batchSize)==0,...
-        'batch size should be divisible with the testing sample size');
-    if strcmp(optimization,'rmsprop') || strcmp(optimization,'adadelta')
-        assert(exist('drate','var')==1,...
-            'variable drate is necessary for rmsprop and adadelta');
-    end
-    if sum(ismember(units,'bmcell')) > 0
-        assert(sum(ismember(units,'mcell'))==0,...
-            'bidirectional units should not be used with directional units');
-    end
-    assert(length(droprate)==length(nhid),...
-        'each layer should have dropout rate')
+    %load testdata
+    load('C:\Users\yuto\Documents\MATLAB\data\gtzan\gtzanMFCC.mat');
+    dim = size(trainMat,1);
+    N_train = size(trainMat,2);
+    T = size(trainMat,3);
+    N_test = size(testMat,2);
     
-    for i=1:patch:samples
-        assert(length(unique(trainLabel(i:i+patch-1)))==1,...
-            'patch data are mixed');
+    %% set hyperparameters
+    L = 2;
+    epochs = 15;
+    patch = 120;
+    batchSize = 100;
+    hid = {256 10};
+    ongpu = false;
+    gcheck = false;
+    m2o = 'mean'; % 'mean' or 'max';
+    
+    unitNum = [dim,hid];
+    nnet = cell(1,L);
+    
+    if strcmp(m2o,'max')
+        manyToOne = @(x) max(x(:,:,end));
+    elseif strcmp(m2o,'mean')
+        manyToOne = @(x) max(mean(x,3));
     end
     
-    for i=1:patch:testSamples
-        assert(length(unique(testLabel(i:i+patch-1)))==1,...
-            'patch data are mixed');
+    %% data formatting
+    prediction = zeros(unitNum{end}, N_test, T);
+    labels = testLabel(1:patch:end);
+    
+    trainLabelVector = oneHotVectorLabel(trainLabel,hid{end},T);
+    testLabelVector = oneHotVectorLabel(testLabel,hid{end},T);
+    
+    trainLabel = repmat(trainLabel', 1, 2);
+    testLabel = repmat(testLabel', 1, 2);
+    
+    if ongpu
+        trainMat = gpuArray(trainMat);
+        trainLabelVector = gpuArray(trainLabelVector);
+        trainLabel =gpuArray(trainLabel);
+    
+        testMat = gpuArray(testMat);
+        testLabelVector = gpuArray(testLabelVector);
+        testLabel = gpuArray(testLabel);
     end
-
-    %% set variables
-    L = length(nhid);
-
-    dims = {size(trainMat,1)};
-    fprops = cell(1,L);
-    prms = cell(1,L);
-    auxPrms = cell(1,L);
-    bprops = cell(1,L);
-    inputs = cell(1,L);
-    updateFun = cell(1,3);
-    gprms = cell(1,L);
-    dropFun = cell(1,L);
-    weiComp = cell(1,L);
-
-    if strcmp(optimization,'rmsprop')==1
-        rmsPrms = cell(1,L);
-
-        updateFun{1,1} = @rmsProp;
-        updateFun{1,3} = [drate eps];
-    elseif strcmp(optimization,'adadelta')==1
-        adadMat = cell(1,L);
-
-        updateFun{1,1} = @AdaDelta;
-        updateFun{1,3} = [drate 1e-7];
-    elseif strcmp(optimization,'vanilla')==1
-        lrmin = 1e-6;
-        lrdec = 0.99;
-
-        vanillaPrms = cell(1,L);
-        for l=1:L, vanillaPrms{l} = [lrdec 1.0]; end
-
-        updateFun{1,1} = @vanillaSGD;
-        updateFun{1,2} = vanillaPrms;
-        updateFun{1,3} = lrmin;
+    
+    %% instance nerual nets
+    for l=1:L-1
+        nnet{l} = GRU();
+        nnet{l}.initLayer(unitNum{l},unitNum{l+1},T,batchSize);
+        nnet{l}.optimization('rmsProp',[0.01 0.9 1e-8]);
+        nnet{l}.onGPU(ongpu);
     end
-
-    for l=1:L
-        dims{1,l+1} = nhid{l};
-
-        vis = dims{l};
-        hid = dims{l+1};
-
-        if strcmp(units{l},'mcell')
-            prm = initLSTMPrms(vis,hid);
-            prms{l} = prm;
-            auxPrms{l} = initLSTMState(hid,batchSize,T);
-
-            fprops{l} = @fpropLSTM;
-            bprops{l} = @bpropLSTM;
-        elseif strcmp(units{l},'bmcell')
-            assert(length(hid)==2,'bidirectional unit should have two hidden cells');
-            if length(vis)==1, vis = [vis vis]; end
-
-            prm = [initLSTMPrms(vis(1),hid(1)) initLSTMPrms(vis(2),hid(2))];
-            prms{l} = prm;
-            auxPrms{l} = [initLSTMState(hid(1),batchSize,T) initLSTMState(hid(2),batchSize,T)];
-
-            fprops{l} = @fpropBLSTM;
-            bprops{l} = @bpropBLSTM;
-        elseif strcmp(units{l},'lp')
-            assert(length(hid)==2,'Lp unit should have two hidden layers');
-
-            prm = initLpPrms(vis,hid);
-            prms{l} = prm;
-
-            fprops{l} = @fpropLpUnit;
-            bprops{l} = @bpropLpUnit;
-        elseif strcmp(units{l},'smax')
-            if strcmp(units{l-1},'bmcell')
-                prm1 = initPrms(vis(1),hid);
-                prm2 = initPrms(vis(2),hid);
-                prm = [prm1 prm2{1}];
-                prms{l} = prm;
-
-                fprops{l} = @fpropBSoftmax;
-                bprops{l} = @bpropBSoftmax;
-                clear prm1 prm2
-            else
-                prm = initPrms(vis,hid);
-                prms{l} = prm;
-
-                fprops{l} = @fpropSoftmax;
-                bprops{l} = @bpropSoftmax;
-            end
-        end
-
-        if strcmp(optimization,'rmsprop')==1,
-            rmsPrms{l} = cellfun(@(x) x.*0,prm,'UniformOutput',false);
-        elseif strcmp(optimization,'adadelta')==1,
-            buf = cellfun(@(x) x.*0,prm,'UniformOutput',false);
-            adadMat{l} = {buf buf};
-        end
-    end
-
-    if strcmp(optimization,'rmsprop')==1
-        updateFun{1,2} = rmsPrms;
-    elseif strcmp(optimization,'adadelta')==1
-        updateFun{1,2} = adadMat;
-    end
-
-    if sum(ismember(units,'bmcell')) > 0
-        expand = @(x) {x x};
-        for i=1:L
-            dropFun{i} = @(x) {dropoutMask(x{1},droprate(i)) dropoutMask(x{2},droprate(i))};
-            weiComp{i} = @(x) {x{1}.*droprate(i) x{2}.*droprate(i)};
-        end
-    else
-        expand = @(x) x;
-        for i=1:L
-            dropFun{i} = @(x) dropoutMask(x,droprate(i));
-            weiComp{i} = @(x) x.*droprate(i);
-        end
-    end
-
-    trainResults = zeros(samples,2);
-    trainResults(:,2) = trainLabel;
-
-    testResults = zeros(testSamples,2);
-    testResults(:,2) = testLabel;
-
-    trainLabel = oneHotVectorLabel(trainLabel,nhid{end},T);
-    testLabel = oneHotVectorLabel(testLabel,nhid{end},T);
-
-    [~,midx] = max(trainLabel(:,:,T));
-    assert(sum(trainResults(:,2)-midx')==0,'check training label');
-    [~,midx] = max(testLabel(:,:,T));
-    assert(sum(testResults(:,2)-midx')==0,'check test label');
-
-    if gcheck == true
-        batchNum = samples/batchSize;
+    
+    nnet{L} = SoftmaxLayer();
+    nnet{L}.initLayer(unitNum{L},unitNum{L+1},T,batchSize);
+    nnet{L}.optimization('rmsProp',[0.01 0.9 1e-8]);
+    nnet{L}.onGPU(ongpu);
+    
+    %% gradient checking
+    batchNumCnt = 1;
+    if gcheck
         gcloop = 1;
-        rerror = cell(1,L);
-        for l=1:L
-            rerror{l} = zeros(length(prms{l}),3,batchNum);
-        end
-        tol = 1e-3;
-    else
-        gcloop = L + 1;
-    end
-
-    preResult = 0;
-
-    %% memory info
-    whos;
-    S = whos;
-    totalMem = 0;
-    for i=1:length(S)
-        totalMem = totalMem + S(i).bytes;
-    end
-    fprintf('Total amount of memory(MB): %3.3f\n\n',totalMem/(1024^2));
-
-    %% main loop
-    for ep=1:epochs
-        fprintf('epoch %d: mini-batch  ',ep);
-        for i=1:length(num2str(batchSize)), fprintf(' '); end
-        tic;
-        rndidx = randperm(samples);
-        batchNum = 0;
-
-        for n=1:batchSize:samples
-            %% start of training
-            idx = rndidx(n:n+batchSize-1);
-            for i=1:length(num2str(n-2))+1, fprintf('\b'); end
-            fprintf('%d~',n);
-
-            %% forward propagation       
-            input = trainMat(:,idx,:);
-            input = expand(input);
-            for l=1:L
-                input = dropFun{l}(input);
-                inputs{l} = input;
-                [input,states] = fprops{l}(input,prms{l},T,auxPrms{l});
-                auxPrms{l} = states;
-            end
-
-            %% backward propagation
-            delta = input - trainLabel(:,idx,:);
-            for l=L:-1:1
-                [delta,gprm] = bprops{l}(delta,inputs{l},prms{l},T,auxPrms{l});
-                gprms{l} = gprm;
-            end
-
-            %% monitor norms of gradient
-            figure(4);
-            for l=L:-1:1       
-                subplot(L,1,l);plot(gradNorm(gprms{l}));
-            end
-            drawnow
-
-            %% gradient checking
-            batchNum = batchNum + 1;
-            for l=gcloop:L
-                rerror{l}(:,:,batchNum) ...
-                    = gradientChecking(l,gprms{l},trainLabel(:,idx,T),eps,trainMat(:,idx,:),...
-                    fprops,expand,weiComp,prms,auxPrms,T);
-            end
-
-            %% update parameterrs
-            for l=1:L                
-                [prm,updatePrm] = updateFun{1}(prms{l},gprms{l},baselr,updateFun{2}{l},updateFun{3});
-                updateFun{2}{l} = updatePrm;
-                prms{l} = prm;
-            end
-        end
-        fprintf(', ellapsed time %4.4f\n',toc');
-
-        %% training set
-        fprintf(' training set:\t'); tic;
-        output = fpropBatch(trainMat,batchSize,fprops,expand,weiComp,prms,auxPrms,T);
-        [~,midx] = max(output(:,:,T));
-        trainResults(:,1) = midx';
-        posT = length(find(trainResults(:,1) - trainResults(:,2)==0));
-        fprintf('result %d/%d (%3.2f%%), ellapsed time %4.4f\n',...
-            posT,samples,posT/samples*100,toc);
-
-        %% test set
-        fprintf(' test set:\t'); tic;
-        output = fpropBatch(testMat,batchSize,fprops,expand,weiComp,prms,auxPrms,T);
-        [~,midx] = max(output(:,:,T));
-        testResults(:,1) = midx';
-        posT = length(find(testResults(:,1) - testResults(:,2)==0));
-        fprintf('result %d/%d (%3.2f%%), ellapsed time %4.4f\n',...
-            posT,testSamples,posT/testSamples*100,toc);
-
-        %% voting
-        posT = votingSummary(patch,testResults,dims{end});
+        batchNum = N_train/batchSize;
         
-        %% save parameters
-        if preResult < posT
-            preResult = posT;
-            save(strcat(home,'/trained/',name,'/',name,'_',timeStr,'.mat'),'fprops','prms','auxPrms');
-        end        
+        reLog = cell(1,L);
+        for l=1:L
+            reLog{1,l} = zeros(3,nnet{l}.prmNum,batchNum);
+        end
+    else
+        gcloop = L+1;
+    end
+    
+    %% main loop
+    for i=1:epochs
+        fprintf('\nepoch %d\n', i);
+        rndidx = randperm(N_train);
+        
+        %% training
+        tic;
+        for n=1:batchSize:N_train
+            idx = n:n+batchSize-1;
+            
+            batchLog = sprintf('(batch %d - %d)',idx(1),idx(end));
+            fprintf(batchLog);
+            idx = rndidx(idx);
+            
+            input = trainMat(:,idx,:);
+            for l=1:L
+                input = nnet{l}.fprop(input);
+            end
+            
+            delta = input - trainLabelVector(:,idx,:);
+            for l=L:-1:1
+                delta = nnet{l}.bprop(delta);
+            end
+            
+            for l=gcloop:L
+                meps = eps^(1/3);
+                reBuf = reLog{1,l};
+                
+                for k=1:nnet{l}.prmNum
+                    val = nnet{l}.prms{k}(1,1);
+                    h = max(abs(val),1) * meps;
+                    
+                    nnet{l}.prms{k}(1,1) = val + h;
+                    input = trainMat(:,idx,:);
+                    for p=1:L
+                        input = nnet{p}.fprop(input);
+                    end
+                    dy1 = sum(sum(trainLabelVector(:,idx,:).*log(input),3),1);
 
-        %% gradient accuracy
-        for l=gcloop:L
-            figure(3)
-            rebuf = squeeze(rerror{l}(:,3,:))';
-            subplot(L,2,l*2-1);
-            plot(rebuf);
-            subplot(L,2,l*2);
-            plot(log10(rebuf));ylim([-9 -3]);
-            drawnow
+                    nnet{l}.prms{k}(1,1) = val - h;
+                    input = trainMat(:,idx,:);
+                    for p=1:L
+                        input = nnet{p}.fprop(input);
+                    end
+                    dy2 = sum(sum(trainLabelVector(:,idx,:).*log(input),3),1);
+                    
+                    nnet{l}.prms{k}(1,1) = val;
 
-            [r,c,v] = ind2sub(size(rerror{l}),find(rerror{l}>tol));
-            idx = find(c==3);
-            if isempty(idx)~=1, fprintf(' relative error > %e\n',tol); end
-            for i=1:length(idx)
-                disp([r(idx(i)) rerror{l}(r(idx(i)),:,v(idx(i))) v(idx(i))]);
+                    dt1 = mean((-dy1 + dy2)./(2*h));
+                    dt2 = nnet{l}.gprms{k}(1,1);
+                    relativeError = abs(dt1 - dt2)/max(abs(dt1),abs(dt2));
+                    reBuf(:,k,batchNumCnt) = [relativeError,dt1,dt2];
+                end
+                
+                reLog{1,l} = reBuf;
+            end
+            batchNumCnt = batchNumCnt + 1;
+            
+            for l=1:L
+                nnet{l}.update();
+            end
+            
+            for c=1:length(batchLog)
+                fprintf('\b');
             end
         end
-
-        %% end of main loop
-        fprintf('\n');
+        t = toc;
+        fprintf('elapsed time %3.3f (training)\n', t);
+        
+        for l=gcloop:L
+            subplot(L,1,l);plot(log10(squeeze(reLog{l}(1,:,:)))');ylim([-10 0]);
+            drawnow
+        end
+        batchNumCnt = 1;
+        
+        %% inference on training data set
+        tic;
+        loss_training = 0;
+        for n=1:batchSize:N_train
+            idx = n:n+batchSize-1;
+            
+            input = trainMat(:,idx,:);
+            for l=1:L
+                input = nnet{l}.fprop(input);
+            end
+            
+            [~,mind] = manyToOne(input);
+            trainLabel(idx,1) = mind;
+            
+            loss_training = loss_training + trainLabelVector(:,idx,:).*log(input);
+        end
+        loss_training = sum(sum(sum(loss_training)));
+        t = toc;
+        
+        result_train = length(find((trainLabel(:,1) - trainLabel(:,2)) == 0));
+        fprintf('result: %3.3f%%, %5.3f (training set)\n',100*(result_train/N_train),loss_training);
+        fprintf('elapsed time %3.3f (inference on training data set)\n', t);
+        
+        %% inference on test data set
+        tic;
+        loss_test = 0;
+        for n=1:batchSize:N_test
+            idx = n:n+batchSize-1;
+            
+            input = testMat(:,idx,:);
+            for l=1:L
+                input = nnet{l}.fprop(input);
+            end
+            
+            [~,mind] = manyToOne(input);
+            testLabel(idx,1) = mind;
+            prediction(:,idx,:) = input;
+            
+            loss_test = loss_test + testLabelVector(:,idx,:).*log(input);
+        end
+        loss_test = sum(sum(sum(loss_test)));
+        t = toc;
+        
+        %% apply voting scheme for sub-sampled data
+        vposT = votingSummary(patch, testLabel, unitNum{end});
+        cposT = confidenceScheme(prediction, patch, labels);
+        %vposT = -1; cposT = -1;
+        
+        %% print out result
+        result_test = length(find((testLabel(:,1) - testLabel(:,2)) == 0));
+        fprintf('result: %3.3f%%, %5.3f (test set)\n',100*(result_test/N_test),loss_test);
+        fprintf('Classification accuracy (voting): %3.3f\n', vposT);
+        fprintf('Classification accuracy (confidence): %3.3f\n', cposT);
+        fprintf('elapsed time %3.3f (inference on test data set)\n', t);
     end
-
-    %% report the best result
-    fid = fopen(strcat(home,'/logs/',name,'/score report'),'a');
-    fprintf(fid,'%s %s %d\n',name,timeStr,preResult);
-    fclose(fid);
-    
-    %% stop taking log
-    diary off
 end

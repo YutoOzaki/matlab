@@ -1,18 +1,7 @@
-function [prms,rmsPrms] = rmsProp(prms,gprms,lrate,rmsPrms,coefs)
-    drate = coefs(1);
-    beta = 1 - drate;
-    eps = coefs(2);
+function [prms,rms] = rmsProp(prms,gprms,rms,lrate,drate,beta,eps,prmNum)
+    for i=1:prmNum
+        rms{i} = drate.*rms{i} + beta.*(gprms{i}.^2);
 
-    rmsPrms = updateRMSP(gprms,rmsPrms,drate,beta);
-
-    L = length(rmsPrms);
-
-    for i=1:L
-        theta = prms{i};
-        rms_theta = rmsPrms{i};
-        gtheta = gprms{i};
-        
-        dtheta = -(lrate./sqrt(rms_theta + eps)).*gtheta;
-        prms{i} = theta + dtheta;
+        prms{i} = prms{i} - lrate.*gprms{i}./sqrt(rms{i} + eps);
     end
 end
