@@ -1,4 +1,4 @@
-classdef LSTM < BaseLayer
+classdef LSTMP < BaseLayer
     properties
         vis, hid, T, batchSize
         prms, states, gprms
@@ -6,8 +6,8 @@ classdef LSTM < BaseLayer
     end
     
     properties (Constant)
-        prmNum = 15;
-        stateNum = 10;
+        prmNum = 16;
+        stateNum = 11;
         normInd = [1;5;6;7];
     end
     
@@ -31,24 +31,26 @@ classdef LSTM < BaseLayer
         function output = nonlinearTrans(obj)
             % states: u, z, c, h, F, I, O, gF, gI, gO
             for t=1:obj.T
-                obj.states{1}(:,:,t) = obj.states{1}(:,:,t) + obj.prms{5}*obj.states{4}(:,:,t);
+                obj.states{1}(:,:,t) = obj.states{1}(:,:,t) + obj.prms{5}*obj.states{11}(:,:,t);
                 obj.states{2}(:,:,t) = tanh(obj.states{1}(:,:,t));
 
-                obj.states{5}(:,:,t) = obj.states{5}(:,:,t) + obj.prms{6}*obj.states{4}(:,:,t) + obj.prms{13}*obj.states{3}(:,:,t);
+                obj.states{5}(:,:,t) = obj.states{5}(:,:,t) + obj.prms{6}*obj.states{11}(:,:,t) + obj.prms{13}*obj.states{3}(:,:,t);
                 obj.states{8}(:,:,t) = obj.sigmoid(obj.states{5}(:,:,t));
                 
-                obj.states{6}(:,:,t) = obj.states{6}(:,:,t) + obj.prms{7}*obj.states{4}(:,:,t) + obj.prms{14}*obj.states{3}(:,:,t);
+                obj.states{6}(:,:,t) = obj.states{6}(:,:,t) + obj.prms{7}*obj.states{11}(:,:,t) + obj.prms{14}*obj.states{3}(:,:,t);
                 obj.states{9}(:,:,t) = obj.sigmoid(obj.states{6}(:,:,t));
 
                 obj.states{3}(:,:,t+1) = obj.states{2}(:,:,t).*obj.states{9}(:,:,t) + obj.states{3}(:,:,t).*obj.states{8}(:,:,t);
                 
-                obj.states{7}(:,:,t) = obj.states{7}(:,:,t) + obj.prms{8}*obj.states{4}(:,:,t) + obj.prms{15}*obj.states{3}(:,:,t+1);
+                obj.states{7}(:,:,t) = obj.states{7}(:,:,t) + obj.prms{8}*obj.states{11}(:,:,t) + obj.prms{15}*obj.states{3}(:,:,t+1);
                 obj.states{10}(:,:,t) = obj.sigmoid(obj.states{7}(:,:,t));
                 
                 obj.states{4}(:,:,t+1) = tanh(obj.states{3}(:,:,t+1)) .* obj.states{10}(:,:,t);
+                
+                obj.states{11}(:,:,t+1) = obj.prms{16}*obj.states{4}(:,:,t+1);
             end
             
-            output = obj.states{4}(:,:,2:end);
+            output = obj.states{11}(:,:,2:end);
         end
         
         function dgate = bpropGate(obj, d)
@@ -59,11 +61,16 @@ classdef LSTM < BaseLayer
             
             dc = obj.states{3}(:,:,1).*0;
             
-            gradR_z_tmp = 0; gradR_o_tmp = 0; gradR_f_tmp = 0; gradR_i_tmp = 0;
-            gradP_o_tmp = 0; gradP_f_tmp = 0; gradP_i_tmp = 0;
+            gradR_z = 0; gradR_o = 0; gradR_f = 0; gradR_i = 0;
+            gradP_o = 0; gradP_f = 0; gradP_i = 0;
+            gradR_p = 0;
             
             for t=obj.T:-1:1
                 dh = d(:,:,t) + obj.prms{5}'*dz(:,:,t+1) + obj.prms{6}'*dF(:,:,t+1) + obj.prms{7}'*dI(:,:,t+1) + obj.prms{8}'*dO(:,:,t+1);
+                
+                gradR_p = gradR_p + dh*obj.states{4}(:,:,t+1)';
+                
+                dh = obj.prms{16}'*dh;
                 
                 dO(:,:,t) = dh .* tanh(obj.states{3}(:,:,t+1)) .* obj.dsigmoid(obj.states{7}(:,:,t));
                 
@@ -75,60 +82,62 @@ classdef LSTM < BaseLayer
                 dI(:,:,t) = dc.*obj.states{2}(:,:,t) .* obj.dsigmoid(obj.states{6}(:,:,t));
                 dz(:,:,t) = dc.*obj.states{9}(:,:,t) .* obj.dtanh(obj.states{1}(:,:,t));
                 
-                gradR_z_tmp = gradR_z_tmp + dz(:,:,t)*obj.states{4}(:,:,t)';
-                gradR_f_tmp = gradR_f_tmp + dF(:,:,t)*obj.states{4}(:,:,t)';
-                gradR_i_tmp = gradR_i_tmp + dI(:,:,t)*obj.states{4}(:,:,t)';
-                gradR_o_tmp = gradR_o_tmp + dO(:,:,t)*obj.states{4}(:,:,t)';
+                gradR_z = gradR_z + dz(:,:,t)*obj.states{11}(:,:,t)';
+                gradR_f = gradR_f + dF(:,:,t)*obj.states{11}(:,:,t)';
+                gradR_i = gradR_i + dI(:,:,t)*obj.states{11}(:,:,t)';
+                gradR_o = gradR_o + dO(:,:,t)*obj.states{11}(:,:,t)';
                 
-                gradP_f_tmp = gradP_f_tmp + dF(:,:,t).*obj.states{3}(:,:,t);
-                gradP_i_tmp = gradP_i_tmp + dI(:,:,t).*obj.states{3}(:,:,t);
-                gradP_o_tmp = gradP_o_tmp + dO(:,:,t).*obj.states{3}(:,:,t+1);
+                gradP_f = gradP_f + dF(:,:,t).*obj.states{3}(:,:,t);
+                gradP_i = gradP_i + dI(:,:,t).*obj.states{3}(:,:,t);
+                gradP_o = gradP_o + dO(:,:,t).*obj.states{3}(:,:,t+1);
             end
             
-            obj.gprms{5} = gradR_z_tmp./obj.batchSize;
-            obj.gprms{6} = gradR_f_tmp./obj.batchSize;
-            obj.gprms{7} = gradR_i_tmp./obj.batchSize;
-            obj.gprms{8} = gradR_o_tmp./obj.batchSize;
+            obj.gprms{5} = gradR_z./obj.batchSize;
+            obj.gprms{6} = gradR_f./obj.batchSize;
+            obj.gprms{7} = gradR_i./obj.batchSize;
+            obj.gprms{8} = gradR_o./obj.batchSize;
             
-            obj.gprms{13} = diag(mean(gradP_f_tmp, 2));
-            obj.gprms{14} = diag(mean(gradP_i_tmp, 2));
-            obj.gprms{15} = diag(mean(gradP_o_tmp, 2));
+            obj.gprms{13} = diag(mean(gradP_f, 2));
+            obj.gprms{14} = diag(mean(gradP_i, 2));
+            obj.gprms{15} = diag(mean(gradP_o, 2));
+            
+            obj.gprms{16} = gradR_p./obj.batchSize;
             
             dgate = {dz, dF, dI, dO};
         end
         
-        function delta = bpropDelta(obj, dgate)
+        function delta = bpropDelta(obj, dgate)    
             dz = dgate{1};
             dF = dgate{2};
             dI = dgate{3};
             dO = dgate{4};
             
-            gradW_z_tmp = 0; gradW_o_tmp = 0; gradW_f_tmp = 0; gradW_i_tmp = 0;
-            gradb_z_tmp = 0; gradb_o_tmp = 0; gradb_f_tmp = 0; gradb_i_tmp = 0;
+            gradW_z = 0; gradW_o = 0; gradW_f = 0; gradW_i = 0;
+            gradb_z = 0; gradb_o = 0; gradb_f = 0; gradb_i = 0;
             
             for t=obj.T:-1:1
                 obj.delta(:,:,t) = obj.prms{1}'*dz(:,:,t) + obj.prms{2}'*dF(:,:,t) + obj.prms{3}'*dI(:,:,t) + obj.prms{4}'*dO(:,:,t);
 
-                gradW_z_tmp = gradW_z_tmp + dz(:,:,t)*obj.input(:,:,t)';
-                gradW_f_tmp = gradW_f_tmp + dF(:,:,t)*obj.input(:,:,t)';
-                gradW_i_tmp = gradW_i_tmp + dI(:,:,t)*obj.input(:,:,t)';
-                gradW_o_tmp = gradW_o_tmp + dO(:,:,t)*obj.input(:,:,t)';
+                gradW_z = gradW_z + dz(:,:,t)*obj.input(:,:,t)';
+                gradW_f = gradW_f + dF(:,:,t)*obj.input(:,:,t)';
+                gradW_i = gradW_i + dI(:,:,t)*obj.input(:,:,t)';
+                gradW_o = gradW_o + dO(:,:,t)*obj.input(:,:,t)';
 
-                gradb_z_tmp = gradb_z_tmp + dz(:,:,t);
-                gradb_f_tmp = gradb_f_tmp + dF(:,:,t);
-                gradb_i_tmp = gradb_i_tmp + dI(:,:,t);
-                gradb_o_tmp = gradb_o_tmp + dO(:,:,t);
+                gradb_z = gradb_z + dz(:,:,t);
+                gradb_f = gradb_f + dF(:,:,t);
+                gradb_i = gradb_i + dI(:,:,t);
+                gradb_o = gradb_o + dO(:,:,t);
             end
             
-            obj.gprms{1} = gradW_z_tmp./obj.batchSize;
-            obj.gprms{2} = gradW_f_tmp./obj.batchSize;
-            obj.gprms{3} = gradW_i_tmp./obj.batchSize;
-            obj.gprms{4} = gradW_o_tmp./obj.batchSize;
+            obj.gprms{1} = gradW_z./obj.batchSize;
+            obj.gprms{2} = gradW_f./obj.batchSize;
+            obj.gprms{3} = gradW_i./obj.batchSize;
+            obj.gprms{4} = gradW_o./obj.batchSize;
 
-            obj.gprms{9} = mean(gradb_z_tmp, 2);
-            obj.gprms{10} = mean(gradb_f_tmp, 2);
-            obj.gprms{11} = mean(gradb_i_tmp, 2);
-            obj.gprms{12} = mean(gradb_o_tmp, 2);
+            obj.gprms{9} = mean(gradb_z, 2);
+            obj.gprms{10} = mean(gradb_f, 2);
+            obj.gprms{11} = mean(gradb_i, 2);
+            obj.gprms{12} = mean(gradb_o, 2);
             
             delta = obj.delta;
         end
@@ -152,6 +161,8 @@ classdef LSTM < BaseLayer
             obj.prms{13} = diag(2.*(rand(obj.hid, 1) - 0.5) .* sqrt(6/(obj.hid+1)));
             obj.prms{14} = diag(2.*(rand(obj.hid, 1) - 0.5) .* sqrt(6/(obj.hid+1)));
             obj.prms{15} = diag(2.*(rand(obj.hid, 1) - 0.5) .* sqrt(6/(obj.hid+1)));
+            
+            obj.prms{16} = 2.*(rand(obj.hid, obj.hid) - 0.5) .* sqrt(6/(obj.hid+obj.hid));
         end
         
         function initStates(obj)
@@ -165,6 +176,8 @@ classdef LSTM < BaseLayer
             obj.states{8} = zeros(obj.hid, obj.batchSize, obj.T+1); % gF
             obj.states{9} = zeros(obj.hid, obj.batchSize, obj.T);   % gI
             obj.states{10} = zeros(obj.hid, obj.batchSize, obj.T);  % gO
+            
+            obj.states{11} = zeros(obj.hid, obj.batchSize, obj.T+1); % p (projection layer)
         end
     end
 end

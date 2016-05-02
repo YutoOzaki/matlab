@@ -1,37 +1,48 @@
 classdef BSoftmaxLayer < BaseLayer
     properties
         vis, hid, T, batchSize
-        prms, states, gprms, updatePrms
+        prms, states, gprms
         input, delta
-        updateFun
     end
     
     properties (Constant)
         prmNum = 3;
-        stateNum = 1;
+        stateNum = 2;
+        normInd = 1;
     end
     
     methods
-        function obj = BSoftmaxLayer(vis, hid, T, batchSize)
-            initLayer(obj, vis, hid, T, batchSize);
+        function initLayer(obj, vis, hid, T, batchSize, isBN)
+            initLayer@BaseLayer(obj, vis, hid, T, batchSize, isBN);
             obj.delta = {obj.delta obj.delta};
         end
         
-        function output = fprop(obj, x)
+        function affineTrans(obj, x)
             obj.input = x;
             bMat = repmat(obj.prms{2}, 1, obj.batchSize);
             
             for t=1:obj.T
-                v = obj.prms{1}*x{1}(:,:,t) + obj.prms{3}*x{2}(:,:,t) + bMat;
-                K = max(v);
-                v = v - repmat(K, obj.hid, 1);
-                obj.states{1}(:,:,t) = exp(v)./repmat(sum(exp(v)),obj.hid,1);
+                obj.states{1}(:,:,t) = obj.prms{1}*x{1}(:,:,t) + obj.prms{3}*x{2}(:,:,t) + bMat;
             end
-            
-            output = obj.states{1};
         end
         
-        function delta = bprop(obj, d)
+        function output = nonlinearTrans(obj)
+            for t=1:obj.T
+                K = max(obj.states{1}(:,:,t));
+                v = obj.states{1}(:,:,t) - repmat(K, obj.hid, 1);
+                obj.states{2}(:,:,t) = exp(v)./repmat(sum(exp(v)),obj.hid,1);
+            end
+            
+            output = obj.states{2};
+        end
+        
+        function dgate = bpropGate(obj, d)
+            dgate = {d};
+        end
+        
+        function delta = bpropDelta(obj, dgate)
+            d = dgate{1};
+            
             gradWf = 0;
             gradWb = 0;
             gradb = 0;
@@ -59,7 +70,8 @@ classdef BSoftmaxLayer < BaseLayer
         end
         
         function initStates(obj)
-            obj.states{1} = zeros(obj.hid, obj.batchSize, obj.T);   % y
+            obj.states{1} = zeros(obj.hid, obj.batchSize, obj.T);   % v
+            obj.states{2} = zeros(obj.hid, obj.batchSize, obj.T);   % y
         end
     end
 end

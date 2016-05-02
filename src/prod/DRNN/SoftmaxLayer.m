@@ -1,9 +1,8 @@
 classdef SoftmaxLayer < BaseLayer
     properties
         vis, hid, T, batchSize
-        prms, states, gprms, updatePrms, BNPrms
+        prms, states, gprms
         input, delta
-        updateFun
     end
     
     properties (Constant)
@@ -32,15 +31,20 @@ classdef SoftmaxLayer < BaseLayer
             output = obj.states{2};
         end
         
-        function delta = bprop(obj, d)
-            gradW = 0;
-            gradb = 0;
+        function dgate = bpropGate(obj, d)
+            dgate = {d};
+        end
+        
+        function delta = bpropDelta(obj, dgate)
+            d = dgate{1};
+            
+            gradW = 0; gradb = 0;
             
             for t=obj.T:-1:1
+                obj.delta(:,:,t) = obj.prms{1}'*d(:,:,t);
+                
                 gradW = gradW + d(:,:,t) * obj.input(:,:,t)';
                 gradb = gradb + d(:,:,t);
-
-                obj.delta(:,:,t) = obj.prms{1}'*d(:,:,t);
             end
             
             obj.gprms{1} = gradW./obj.batchSize;

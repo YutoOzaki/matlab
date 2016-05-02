@@ -1,21 +1,23 @@
 function DRNN()
     %% load data
-    %load testdata
-    load('C:\Users\yuto\Documents\MATLAB\data\gtzan\gtzanMFCC.mat');
+    load testdata
+    %load('C:\Users\yuto\Documents\MATLAB\data\gtzan\gtzanMFCC.mat');
     dim = size(trainMat,1);
     N_train = size(trainMat,2);
     T = size(trainMat,3);
     N_test = size(testMat,2);
     
     %% set hyperparameters
-    L = 2;
     epochs = 15;
     patch = 120;
-    batchSize = 100;
-    hid = {256 10};
+    batchSize = 3;
+    hid = {20 3};
     ongpu = false;
+    BN = false;
     gcheck = false;
-    m2o = 'mean'; % 'mean' or 'max';
+    m2o = 'max'; % 'mean' or 'max';
+    
+    L = length(hid);
     
     unitNum = [dim,hid];
     nnet = cell(1,L);
@@ -48,30 +50,25 @@ function DRNN()
     
     %% instance nerual nets
     for l=1:L-1
-        nnet{l} = GRU();
-        nnet{l}.initLayer(unitNum{l},unitNum{l+1},T,batchSize);
+        nnet{l} = BLSTM();
+        nnet{l}.initLayer(unitNum{l},unitNum{l+1},T,batchSize,BN);
         nnet{l}.optimization('rmsProp',[0.01 0.9 1e-8]);
+        %nnet{l}.optimization('adaDelta',[0.95 1e-6]);
+        %nnet{l}.optimization('adaGrad',[0.1 1e-8]);
+        %nnet{l}.optimization('adam',[1e-3 0.9 0.999 1e-7]);
         nnet{l}.onGPU(ongpu);
     end
     
-    nnet{L} = SoftmaxLayer();
-    nnet{L}.initLayer(unitNum{L},unitNum{L+1},T,batchSize);
+    nnet{L} = BSoftmaxLayer();
+    nnet{L}.initLayer(unitNum{L},unitNum{L+1},T,batchSize,BN);
     nnet{L}.optimization('rmsProp',[0.01 0.9 1e-8]);
+    %nnet{L}.optimization('adaDelta',[0.95 1e-6]);
+    %nnet{L}.optimization('adaGrad',[0.1 1e-8]);
+    %nnet{L}.optimization('adam',[1e-3 0.9 0.999 1e-7]);
     nnet{L}.onGPU(ongpu);
     
     %% gradient checking
-    batchNumCnt = 1;
-    if gcheck
-        gcloop = 1;
-        batchNum = N_train/batchSize;
-        
-        reLog = cell(1,L);
-        for l=1:L
-            reLog{1,l} = zeros(3,nnet{l}.prmNum,batchNum);
-        end
-    else
-        gcloop = L+1;
-    end
+    gchecker = GradientChecker(gcheck, L, N_train/batchSize ,nnet);
     
     %% main loop
     for i=1:epochs
@@ -97,39 +94,7 @@ function DRNN()
                 delta = nnet{l}.bprop(delta);
             end
             
-            for l=gcloop:L
-                meps = eps^(1/3);
-                reBuf = reLog{1,l};
-                
-                for k=1:nnet{l}.prmNum
-                    val = nnet{l}.prms{k}(1,1);
-                    h = max(abs(val),1) * meps;
-                    
-                    nnet{l}.prms{k}(1,1) = val + h;
-                    input = trainMat(:,idx,:);
-                    for p=1:L
-                        input = nnet{p}.fprop(input);
-                    end
-                    dy1 = sum(sum(trainLabelVector(:,idx,:).*log(input),3),1);
-
-                    nnet{l}.prms{k}(1,1) = val - h;
-                    input = trainMat(:,idx,:);
-                    for p=1:L
-                        input = nnet{p}.fprop(input);
-                    end
-                    dy2 = sum(sum(trainLabelVector(:,idx,:).*log(input),3),1);
-                    
-                    nnet{l}.prms{k}(1,1) = val;
-
-                    dt1 = mean((-dy1 + dy2)./(2*h));
-                    dt2 = nnet{l}.gprms{k}(1,1);
-                    relativeError = abs(dt1 - dt2)/max(abs(dt1),abs(dt2));
-                    reBuf(:,k,batchNumCnt) = [relativeError,dt1,dt2];
-                end
-                
-                reLog{1,l} = reBuf;
-            end
-            batchNumCnt = batchNumCnt + 1;
+            gchecker.gradientChecking(nnet,trainMat(:,idx,:),trainLabelVector(:,idx,:));
             
             for l=1:L
                 nnet{l}.update();
@@ -141,12 +106,7 @@ function DRNN()
         end
         t = toc;
         fprintf('elapsed time %3.3f (training)\n', t);
-        
-        for l=gcloop:L
-            subplot(L,1,l);plot(log10(squeeze(reLog{l}(1,:,:)))');ylim([-10 0]);
-            drawnow
-        end
-        batchNumCnt = 1;
+        gchecker.disp();
         
         %% inference on training data set
         tic;
@@ -192,9 +152,9 @@ function DRNN()
         t = toc;
         
         %% apply voting scheme for sub-sampled data
-        vposT = votingSummary(patch, testLabel, unitNum{end});
-        cposT = confidenceScheme(prediction, patch, labels);
-        %vposT = -1; cposT = -1;
+        %vposT = votingSummary(patch, testLabel, unitNum{end});
+        %cposT = confidenceScheme(prediction, patch, labels);
+        vposT = -1; cposT = -1;
         
         %% print out result
         result_test = length(find((testLabel(:,1) - testLabel(:,2)) == 0));
