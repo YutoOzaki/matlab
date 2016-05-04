@@ -8,7 +8,7 @@ function votingResults = votingSummary(patch,testResults,classNum)
     confMat = zeros(classNum);
     confMatAll = zeros(classNum);
     
-    while n_start<testSamples
+    while n_start<=testSamples
         testEntities = testEntities + 1;
         buf = testResults(n_start:n_end,1);
 
@@ -31,9 +31,9 @@ function votingResults = votingSummary(patch,testResults,classNum)
     disp(confMat);
     disp(confMatAll);
     
-    figure(1);
+    figure(3);
     imshow(confMat,'initialMagnification',3600);title('CM (songs)');colormap('jet');caxis([0 classNum]), colorbar;
-    figure(2);
+    figure(4);
     imshow(confMatAll,'initialMagnification',3600);title('CM (block-wise MFCC)');colormap('jet');caxis([0 patch*classNum]), colorbar;
     drawnow;
 end
