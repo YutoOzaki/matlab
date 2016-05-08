@@ -101,11 +101,13 @@ classdef GradientChecker < handle
             
             if obj.batchNumCnt > obj.batchNum
                 obj.batchNumCnt = 1;
+                disp(obj);
             end
         end
         
         function disp(obj)
             for l=1:obj.L
+                figure(2);
                 subplot(obj.L,1,l);plot(log10(squeeze(obj.reLog{l}(1,:,:)))');ylim([-10 0]);
             end
             drawnow

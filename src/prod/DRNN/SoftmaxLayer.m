@@ -31,6 +31,12 @@ classdef SoftmaxLayer < BaseLayer
             output = obj.states{2};
         end
         
+        function continueStates(obj)
+        end
+        
+        function resetStates(obj)
+        end
+        
         function dgate = bpropGate(obj, d)
             dgate = {d};
         end

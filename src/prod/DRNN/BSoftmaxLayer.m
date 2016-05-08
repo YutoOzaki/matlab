@@ -12,8 +12,7 @@ classdef BSoftmaxLayer < BaseLayer
     end
     
     methods
-        function initLayer(obj, vis, hid, T, batchSize, isBN)
-            initLayer@BaseLayer(obj, vis, hid, T, batchSize, isBN);
+        function myInit(obj)
             obj.delta = {obj.delta obj.delta};
         end
         
@@ -34,6 +33,12 @@ classdef BSoftmaxLayer < BaseLayer
             end
             
             output = obj.states{2};
+        end
+        
+        function continueStates(obj)
+        end
+        
+        function resetStates(obj)
         end
         
         function dgate = bpropGate(obj, d)

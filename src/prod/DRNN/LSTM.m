@@ -51,6 +51,14 @@ classdef LSTM < BaseLayer
             output = obj.states{4}(:,:,2:end);
         end
         
+        function continueStates(obj)
+            obj.states{4}(:,:,1) = obj.states{4}(:,:,end);
+        end
+        
+        function resetStates(obj)
+            obj.states{4} = obj.states{4}.*0;
+        end
+        
         function dgate = bpropGate(obj, d)
             dz = repmat(obj.states{1}(:,:,1).*0, 1, 1, obj.T+1);
             dF = repmat(obj.states{5}(:,:,1).*0, 1, 1, obj.T+1);

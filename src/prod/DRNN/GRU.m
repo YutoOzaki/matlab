@@ -44,6 +44,14 @@ classdef GRU < BaseLayer
             output = obj.states{7}(:,:,2:end);
         end
         
+        function continueStates(obj)
+            obj.states{7}(:,:,1) = obj.states{7}(:,:,end);
+        end
+        
+        function resetStates(obj)
+            obj.states{7} = obj.states{7}.*0;
+        end
+        
         function dgate = bpropGate(obj, d)
             dz = repmat(obj.states{1}(:,:,1).*0, 1, 1, obj.T+1);
             dr = repmat(obj.states{3}(:,:,1).*0, 1, 1, obj.T+1);

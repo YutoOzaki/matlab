@@ -11,6 +11,14 @@ classdef BaseLayer < handle
         BNprms, BNstates, BNgprms, BNupdatePrms
         BN, BNprmNum
         bneps = 1e-6;
+        
+        dropRate, dropMask, compensationFlag = true;
+        
+        layer
+        
+        sigmoid = @(x) 1./(1 + exp(-x));
+        dsigmoid = @(x) (1./(1 + exp(-x))).*(1 - 1./(1 + exp(-x)));
+        dtanh = @(x) 1 - tanh(x).^2;
     end
     
     properties (Abstract = true, Constant = true)
@@ -18,23 +26,27 @@ classdef BaseLayer < handle
         normInd % index of state to be batch-normalized
     end
     
-    properties
-        sigmoid = @(x) 1./(1 + exp(-x));
-        dsigmoid = @(x) (1./(1 + exp(-x))).*(1 - 1./(1 + exp(-x)));
-        dtanh = @(x) 1 - tanh(x).^2;
-    end
-    
     methods (Abstract = true)
         affineTrans(obj, x)
         nonlinearTrans(obj)
         bpropGate(obj, d)
         bpropDelta(obj, dgate)
+        continueStates(obj)
+        resetStates(obj)
         initPrms(obj)
         initStates(obj)
     end
     
     methods        
-        function initLayer(obj, vis, hid, T, batchSize, isBN)
+        function initLayer(obj, vis, hid, T, batchSize, isBN, dropRate)
+            persistent L;
+            if isempty(L)
+                L = 1;
+            end
+            obj.layer = L;
+            L = L + 1;
+            
+            
             obj.vis = vis;
             obj.hid = hid;
             obj.T = T;
@@ -51,11 +63,25 @@ classdef BaseLayer < handle
             
             obj.gprms = obj.prms;
             
-            if nargin == 5
-                obj.BN = false;
+            if nargin < 7
+                obj.dropRate = 0.0;
+                createDropMask(obj);
+                
+                if nargin < 6
+                    obj.BN = false;
+                else
+                    initBNLayer(obj, isBN);
+                end
             else
+                obj.dropRate = dropRate;
+                obj.BN = isBN;
                 initBNLayer(obj, isBN);
             end
+            
+            myInit(obj);
+        end
+        
+        function myInit(obj)
         end
         
         function initBNLayer(obj, BN)
@@ -74,7 +100,24 @@ classdef BaseLayer < handle
             obj.BN = BN;
         end
         
+        function gradNorm(obj)
+            gnorm = cell2mat(cellfun(@(x) norm(x,2), obj.gprms, 'UniformOutput', false));
+            denom = cell2mat(cellfun(@(x) numel(x), obj.gprms, 'UniformOutput', false));
+            
+            figure(obj.layer)
+            subplot(211); plot(gnorm);
+            subplot(212); plot(gnorm./denom);
+            drawnow
+        end
+        
         function output = fprop(obj, x)
+            if iscell(x)
+                x{1} = x{1}.*obj.dropMask;
+                x{2} = x{2}.*obj.dropMask;
+            else
+                x = x.*obj.dropMask;
+            end
+            
             affineTrans(obj, x);
             if obj.BN
                 batchNormalization(obj);
@@ -88,6 +131,30 @@ classdef BaseLayer < handle
                 dgate = bpropBN(obj, dgate);
             end
             delta = bpropDelta(obj, dgate);
+            
+            if iscell(delta)
+                delta{1} = delta{1}.*obj.dropMask;
+                delta{2} = delta{2}.*obj.dropMask;
+            else
+                delta = delta.*obj.dropMask;
+            end
+        end
+        
+        function createDropMask(obj)
+            obj.dropMask = binornd(1, 1 - obj.dropRate, obj.vis, obj.batchSize, obj.T);
+        end
+        
+        function dropoutCompensation(obj)
+            if obj.compensationFlag
+                factor = 1 - obj.dropRate;
+                obj.dropMask = binornd(1, 1, obj.vis, obj.batchSize, obj.T);
+            else
+                factor = 1./(1 - obj.dropRate);
+            end
+            
+            obj.compensationFlag = not(obj.compensationFlag);
+            
+            obj.prms = cellfun(@(x) x.*factor, obj.prms, 'UniformOutput', false);
         end
         
         function batchNormalization(obj)
@@ -173,6 +240,7 @@ classdef BaseLayer < handle
         end
         
         function update(obj)
+            gradNorm(obj);
             [prms_new, updatePrms_new] = obj.updateFun(obj.prms, obj.gprms, obj.updatePrms);
             
             obj.prms = prms_new;

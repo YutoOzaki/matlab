@@ -12,8 +12,7 @@ classdef BLSTM < BaseLayer
     end
     
     methods
-        function initLayer(obj, vis, hid, T, batchSize, isBN)
-            initLayer@BaseLayer(obj, vis, hid, T, batchSize, isBN);
+        function myInit(obj)
             obj.delta = {obj.delta obj.delta};
         end
         
@@ -88,6 +87,16 @@ classdef BLSTM < BaseLayer
             end
             
             output = {obj.states{4}(:,:,2:end) obj.states{14}(:,:,1:obj.T)};
+        end
+        
+        function continueStates(obj)
+            obj.states{4}(:,:,1) = obj.states{4}(:,:,end);
+            obj.states{14}(:,:,end) = obj.states{14}(:,:,1);
+        end
+        
+        function resetStates(obj)
+            obj.states{4} = obj.states{4}.*0;
+            obj.states{14} = obj.states{14}.*0;
         end
         
         function dgate = bpropGate(obj, d)
