@@ -14,7 +14,8 @@ classdef BaseLayer < handle
         
         dropRate, dropMask, compensationFlag = true;
         
-        layer
+        %layer
+        gnormMu, gnormSig, updateCount, clippingWrapper, thresh
         
         sigmoid = @(x) 1./(1 + exp(-x));
         dsigmoid = @(x) (1./(1 + exp(-x))).*(1 - 1./(1 + exp(-x)));
@@ -38,14 +39,19 @@ classdef BaseLayer < handle
     end
     
     methods        
-        function initLayer(obj, vis, hid, T, batchSize, isBN, dropRate)
+        function initLayer(obj, vis, hid, T, batchSize, isBN, dropRate, clipping)
+            %{
             persistent L;
             if isempty(L)
                 L = 1;
             end
             obj.layer = L;
             L = L + 1;
+            %}
             
+            if iscell(vis)
+                vis = vis{2};
+            end
             
             obj.vis = vis;
             obj.hid = hid;
@@ -53,27 +59,36 @@ classdef BaseLayer < handle
             obj.batchSize = batchSize;
             
             obj.prms = cell(obj.prmNum, 1);
-            
             obj.states = cell(obj.stateNum,1);
-            
             obj.delta = zeros(vis, batchSize, T);
             
             initPrms(obj);
             initStates(obj);
-            
             obj.gprms = obj.prms;
+            
+            if nargin < 8
+                obj.clippingWrapper = @(x) x;
+            else
+                if clipping > 0
+                    obj.clippingWrapper = @gradientClipping;
+                    obj.gnormMu = zeros(obj.prmNum,1);
+                    obj.gnormSig = zeros(obj.prmNum,1);
+                    obj.updateCount = 0;
+                    obj.thresh = clipping .* ones(obj.prmNum, 1);
+                else
+                    obj.clippingWrapper = @(x) x;
+                end
+            end
             
             if nargin < 7
                 obj.dropRate = 0.0;
-                createDropMask(obj);
-                
-                if nargin < 6
-                    obj.BN = false;
-                else
-                    initBNLayer(obj, isBN);
-                end
             else
                 obj.dropRate = dropRate;
+            end
+            
+            if nargin < 6
+                obj.BN = false;
+            else
                 obj.BN = isBN;
                 initBNLayer(obj, isBN);
             end
@@ -100,14 +115,43 @@ classdef BaseLayer < handle
             obj.BN = BN;
         end
         
-        function gradNorm(obj)
+        function gradientClipping(obj)
             gnorm = cell2mat(cellfun(@(x) norm(x,2), obj.gprms, 'UniformOutput', false));
-            denom = cell2mat(cellfun(@(x) numel(x), obj.gprms, 'UniformOutput', false));
             
+            %{
+            alpha = 1/(obj.updateCount + 1);
+            beta = 1 - alpha;
+            obj.gnormSig = beta.*obj.gnormSig + alpha*beta.*(gnorm - obj.gnormMu).^2;
+            obj.gnormMu = beta.*obj.gnormMu + alpha.*gnorm;
+            obj.updateCount = obj.updateCount + 1;
+            
+            factor = 1.7;
+            std = sqrt(obj.gnormSig);
+            obj.thresh = obj.gnormMu + std*factor;
+            [~, ind] = find(obj.thresh > obj.constThresh);
+            obj.thresh(ind) = obj.constThresh;
+            %}
+            
+            for i=1:obj.prmNum
+                if gnorm(i) > obj.thresh(i)
+                    obj.gprms{i} = obj.thresh(i)./gnorm(i).*obj.gprms{i};
+                end
+            end
+            
+            %{
+            dist = [(obj.gnormMu - std*3) (obj.gnormMu - std*2) (obj.gnormMu - std*1)...
+                obj.gnormMu (obj.gnormMu + std*1) (obj.gnormMu + std*2) (obj.gnormMu + std*3)];
+            
+            x_one = ones(7,1);
             figure(obj.layer)
-            subplot(211); plot(gnorm);
-            subplot(212); plot(gnorm./denom);
+            for i=1:obj.prmNum
+                subplot(1, obj.prmNum, i);
+                plot(gnorm(i), 'o'); hold on;
+                plot(x_one, dist(i,:), 'x'); hold off;
+                axis tight;
+            end
             drawnow
+            %}
         end
         
         function output = fprop(obj, x)
@@ -240,7 +284,7 @@ classdef BaseLayer < handle
         end
         
         function update(obj)
-            gradNorm(obj);
+            obj.clippingWrapper(obj);
             [prms_new, updatePrms_new] = obj.updateFun(obj.prms, obj.gprms, obj.updatePrms);
             
             obj.prms = prms_new;

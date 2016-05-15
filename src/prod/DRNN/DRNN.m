@@ -1,48 +1,35 @@
-function DRNN()
-    %% set hyperparameters
-    batchSize = 100;
-    unitNum = {40 128 10};
-    T = 80;
-    BN = [false false];
-    dropRate = [0.0 0.0];
+function bestResult = DRNN(hprms)
+    showUnitNum(hprms.unitNum);
+    disp(hprms);
     
-    epochs = 50;
-    noUpdatSpanCriterion = 10;
-    longTerm = false;
-    ongpu = false;
+    %% set hyperparameters
+    batchSize = hprms.batchSize;
+    unitNum = hprms.unitNum;
+    T = hprms.T;
+    
+    epochs = hprms.epochs;
+    noUpdatSpanCriterion = hprms.noUpdatSpanCriterion;
+    longTerm = hprms.longTerm;
     gcheck = false;
     
-    L = length(unitNum) - 1;
-    nnet = cell(1,L);
+    L = length(hprms.type);
+    nnet = cell(L,1);
     
     scheme = {'mean', 'max', 'max rate'};
     bestResult = zeros(length(scheme), 2);
     
-    %% create dataset
-    N = [900 0 100]; % training, validation and test
-    getDataSet = @() prepGTZAN(batchSize, N);
-    %getDataSet = @() prepTestData(batchSize, 'testdata.mat');
-    %getDataSet = @() prepTestData(batchSize, 'C:\Users\yuto\Documents\MATLAB\data\gtzan\gtzanMFCC.mat');
-    dataSet = getDataSet();
+    dataSet = hprms.dataSet;
+    %initT = @(a,b) 1;
+    %initT = @(T, T_total) randi(mod(T_total, T));
+    initT = @(T, a) randi(T);
     
-    %% instance nerual nets
-    for l=1:L-1
-        nnet{l} = LSTM();
-        nnet{l}.initLayer(unitNum{l},unitNum{l+1},T,batchSize,BN(l),dropRate(l));
-        nnet{l}.optimization('rmsProp',[0.01 0.9 1e-8]);
-        %nnet{l}.optimization('adaDelta',[0.95 1e-6]);
-        %nnet{l}.optimization('adaGrad',[0.1 1e-8]);
-        %nnet{l}.optimization('adam',[1e-3 0.9 0.999 1e-7]);
-        nnet{l}.onGPU(ongpu);
+    %% create neural net
+    for l=1:L
+        eval(strcat('nnet{l} = ', hprms.type{l}, '()', ';'));
+        nnet{l}.initLayer(unitNum{l}, unitNum{l+1}, T, batchSize, hprms.BN(l), hprms.dropRate(l), hprms.clipping(l));
+        nnet{l}.optimization(hprms.gdoa, hprms.gdoaPrm);
+        nnet{l}.onGPU(hprms.gpumode);
     end
-    
-    nnet{L} = SoftmaxLayer();
-    nnet{L}.initLayer(unitNum{L},unitNum{L+1},T,batchSize,BN(L),dropRate(L));
-    nnet{L}.optimization('rmsProp',[0.01 0.9 1e-8]);
-    %nnet{L}.optimization('adaDelta',[0.95 1e-6]);
-    %nnet{L}.optimization('adaGrad',[0.1 1e-8]);
-    %nnet{L}.optimization('adam',[1e-3 0.9 0.999 1e-7]);
-    nnet{L}.onGPU(ongpu);
     
     %% gradient checking
     gchecker = GradientChecker(gcheck, L, floor(dataSet{1}.N/batchSize), nnet);
@@ -60,16 +47,9 @@ function DRNN()
             
             batchData = dataSet{1}.getFeature();
             labelVector = dataSet{1}.label2vec(dataSet{1}.getLabel(), unitNum{end}, T);
-            
             T_total = size(batchData, 3);
             
-            t_mod = mod(T_total,T);
-            if t_mod == 0
-                t = 1;
-            else
-                t = randi(t_mod);
-            end
-            
+            t = initT(T, T_total);
             if longTerm
                 for l=1:L
                     nnet{l}.resetStates();
@@ -125,4 +105,31 @@ function DRNN()
             break;
         end
     end
+    
+    fprintf('\n**finished**\n');
+    for i=1:length(scheme)
+        fprintf('%3.3f%% at epoch %d (%s)\n', bestResult(i,1), bestResult(i,2), scheme{i});
+    end
+end
+
+function showUnitNum(unitNum)
+    fprintf('units: %d', unitNum{1});
+    
+    for i=2:length(unitNum)
+        fprintf(' - ');
+        
+        if iscell(unitNum{i})
+            fprintf('(%d', unitNum{i}{1});
+            
+            for j=2:length(unitNum{i})
+                fprintf(' - %d', unitNum{i}{j});
+            end
+            
+            fprintf(')');
+        else
+            fprintf('%d', unitNum{i});
+        end
+    end
+    
+    fprintf('\n');
 end

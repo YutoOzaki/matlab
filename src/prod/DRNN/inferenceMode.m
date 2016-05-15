@@ -6,8 +6,8 @@ function results = inferenceMode(dataSet, nnet, classNum, longTerm, i)
     loss_training = 0;
     L = length(nnet);
     T = nnet{1}.T;
-    h = zeros(classNum,dataSet.batchSize);
-    confmat = zeros(classNum,classNum,3);
+    h = zeros(classNum, dataSet.batchSize);
+    confmat = zeros(classNum, classNum, 3);
     
     for l=1:L
         nnet{l}.dropoutCompensation();
@@ -70,10 +70,6 @@ function results = inferenceMode(dataSet, nnet, classNum, longTerm, i)
             confmat(label(j),mind(j),3) = confmat(label(j),mind(j),3) + 1;
         end
         
-        %{
-        h = h./(t-1);
-        r = 1 + sum(h.*log(h+eps))./log(classNum);
-        %}
         h = h.*0;
     end
     loss_training = sum(sum(sum(loss_training)));

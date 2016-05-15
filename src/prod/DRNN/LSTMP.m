@@ -53,6 +53,14 @@ classdef LSTMP < BaseLayer
             output = obj.states{11}(:,:,2:end);
         end
         
+        function continueStates(obj)
+            obj.states{11}(:,:,1) = obj.states{11}(:,:,end);
+        end
+        
+        function resetStates(obj)
+            obj.states{11} = obj.states{11}.*0;
+        end
+        
         function dgate = bpropGate(obj, d)
             dz = repmat(obj.states{1}(:,:,1).*0, 1, 1, obj.T+1);
             dF = repmat(obj.states{5}(:,:,1).*0, 1, 1, obj.T+1);
@@ -143,41 +151,57 @@ classdef LSTMP < BaseLayer
         end
         
         function initPrms(obj)
-            obj.prms{1} = 2.*(rand(obj.hid, obj.vis) - 0.5) .* sqrt(6/(obj.vis+obj.hid));
-            obj.prms{2} = 2.*(rand(obj.hid, obj.vis) - 0.5) .* sqrt(6/(obj.vis+obj.hid));
-            obj.prms{3} = 2.*(rand(obj.hid, obj.vis) - 0.5) .* sqrt(6/(obj.vis+obj.hid));
-            obj.prms{4} = 2.*(rand(obj.hid, obj.vis) - 0.5) .* sqrt(6/(obj.vis+obj.hid));
+            obj.prms{1} = 2.*(rand(obj.hid{1}, obj.vis) - 0.5) .* sqrt(6/(obj.vis+obj.hid{1}));
+            obj.prms{2} = 2.*(rand(obj.hid{1}, obj.vis) - 0.5) .* sqrt(6/(obj.vis+obj.hid{1}));
+            obj.prms{3} = 2.*(rand(obj.hid{1}, obj.vis) - 0.5) .* sqrt(6/(obj.vis+obj.hid{1}));
+            obj.prms{4} = 2.*(rand(obj.hid{1}, obj.vis) - 0.5) .* sqrt(6/(obj.vis+obj.hid{1}));
             
-            obj.prms{5} = 2.*(rand(obj.hid, obj.hid) - 0.5) .* sqrt(6/(obj.hid+obj.hid));
-            obj.prms{6} = 2.*(rand(obj.hid, obj.hid) - 0.5) .* sqrt(6/(obj.hid+obj.hid));
-            obj.prms{7} = 2.*(rand(obj.hid, obj.hid) - 0.5) .* sqrt(6/(obj.hid+obj.hid));
-            obj.prms{8} = 2.*(rand(obj.hid, obj.hid) - 0.5) .* sqrt(6/(obj.hid+obj.hid));
+            obj.prms{5} = 2.*(rand(obj.hid{1}, obj.hid{2}) - 0.5) .* sqrt(6/(obj.hid{1}+obj.hid{2}));
+            obj.prms{6} = 2.*(rand(obj.hid{1}, obj.hid{2}) - 0.5) .* sqrt(6/(obj.hid{1}+obj.hid{2}));
+            obj.prms{7} = 2.*(rand(obj.hid{1}, obj.hid{2}) - 0.5) .* sqrt(6/(obj.hid{1}+obj.hid{2}));
+            obj.prms{8} = 2.*(rand(obj.hid{1}, obj.hid{2}) - 0.5) .* sqrt(6/(obj.hid{1}+obj.hid{2}));
             
-            obj.prms{9} = zeros(obj.hid, 1);
-            obj.prms{10} = zeros(obj.hid, 1);
-            obj.prms{11} = zeros(obj.hid, 1);
-            obj.prms{12} = zeros(obj.hid, 1);
+            obj.prms{9} = zeros(obj.hid{1}, 1);
+            obj.prms{10} = zeros(obj.hid{1}, 1);
+            obj.prms{11} = zeros(obj.hid{1}, 1);
+            obj.prms{12} = zeros(obj.hid{1}, 1);
             
-            obj.prms{13} = diag(2.*(rand(obj.hid, 1) - 0.5) .* sqrt(6/(obj.hid+1)));
-            obj.prms{14} = diag(2.*(rand(obj.hid, 1) - 0.5) .* sqrt(6/(obj.hid+1)));
-            obj.prms{15} = diag(2.*(rand(obj.hid, 1) - 0.5) .* sqrt(6/(obj.hid+1)));
+            obj.prms{13} = diag(2.*(rand(obj.hid{1}, 1) - 0.5) .* sqrt(6/(obj.hid{1}+1)));
+            obj.prms{14} = diag(2.*(rand(obj.hid{1}, 1) - 0.5) .* sqrt(6/(obj.hid{1}+1)));
+            obj.prms{15} = diag(2.*(rand(obj.hid{1}, 1) - 0.5) .* sqrt(6/(obj.hid{1}+1)));
             
-            obj.prms{16} = 2.*(rand(obj.hid, obj.hid) - 0.5) .* sqrt(6/(obj.hid+obj.hid));
+            obj.prms{16} = 2.*(rand(obj.hid{2}, obj.hid{1}) - 0.5) .* sqrt(6/(obj.hid{1}+obj.hid{2}));
         end
         
         function initStates(obj)
-            obj.states{1} = zeros(obj.hid, obj.batchSize, obj.T);   % u
-            obj.states{2} = zeros(obj.hid, obj.batchSize, obj.T);   % z
-            obj.states{3} = zeros(obj.hid, obj.batchSize, obj.T+1); % c
-            obj.states{4} = zeros(obj.hid, obj.batchSize, obj.T+1); % h
-            obj.states{5} = zeros(obj.hid, obj.batchSize, obj.T);   % F
-            obj.states{6} = zeros(obj.hid, obj.batchSize, obj.T);   % I
-            obj.states{7} = zeros(obj.hid, obj.batchSize, obj.T);   % O
-            obj.states{8} = zeros(obj.hid, obj.batchSize, obj.T+1); % gF
-            obj.states{9} = zeros(obj.hid, obj.batchSize, obj.T);   % gI
-            obj.states{10} = zeros(obj.hid, obj.batchSize, obj.T);  % gO
+            obj.states{1} = zeros(obj.hid{1}, obj.batchSize, obj.T);   % u
+            obj.states{2} = zeros(obj.hid{1}, obj.batchSize, obj.T);   % z
+            obj.states{3} = zeros(obj.hid{1}, obj.batchSize, obj.T+1); % c
+            obj.states{4} = zeros(obj.hid{1}, obj.batchSize, obj.T+1); % h
+            obj.states{5} = zeros(obj.hid{1}, obj.batchSize, obj.T);   % F
+            obj.states{6} = zeros(obj.hid{1}, obj.batchSize, obj.T);   % I
+            obj.states{7} = zeros(obj.hid{1}, obj.batchSize, obj.T);   % O
+            obj.states{8} = zeros(obj.hid{1}, obj.batchSize, obj.T+1); % gF
+            obj.states{9} = zeros(obj.hid{1}, obj.batchSize, obj.T);   % gI
+            obj.states{10} = zeros(obj.hid{1}, obj.batchSize, obj.T);  % gO
             
-            obj.states{11} = zeros(obj.hid, obj.batchSize, obj.T+1); % p (projection layer)
+            obj.states{11} = zeros(obj.hid{2}, obj.batchSize, obj.T+1); % p (projection layer)
+        end
+        
+        function initBNLayer(obj, BN)
+            if BN
+                obj.BNstates = cell(4,length(obj.normInd));
+                
+                obj.BNprms = cell(2,length(obj.normInd));
+                obj.BNprms(1,:) = {ones(obj.hid{1},1)};
+                obj.BNprms(2,:) = {zeros(obj.hid{1},1)};
+                
+                obj.BNgprms = cell(2, length(obj.normInd));
+                
+                obj.BNprmNum = length(obj.normInd) * 2; % scale and shift for each gradient channel
+            end
+            
+            obj.BN = BN;
         end
     end
 end

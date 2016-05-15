@@ -110,8 +110,8 @@ classdef GTZAN < DataSet
         end
         
         function feature = batchFormat(obj, cellFormat)
-            dim = cellfun(@(x) size(x,1),cellFormat);
-            T = cellfun(@(x) size(x,2),cellFormat);
+            dim = cellfun(@(x) size(x,1), cellFormat);
+            T = cellfun(@(x) size(x,2), cellFormat);
             T_min = min(T);
             
             feature = zeros(dim(1), obj.batchSize, T_min);

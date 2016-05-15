@@ -32,11 +32,11 @@ function hprms = randsearch()
     b = 0.6;
     droprate = [ones(trials,1) 1 - binornd(1,0.5,trials,1).*((b-a).*rand(trials,1) + a)];
     
-    a = log(15);
-    b = log(50);
+    a = log(10);
+    b = log(20);
     epochs = round(exp((b-a).*rand(trials,1) + a));
     
-    a = [10 20 40 70 100 125 200];
+    a = [10 20 40 80 100 125 200];
     b = randi(length(a),trials,1);
     batchSize = a(b)';
     
@@ -56,7 +56,6 @@ function hprms = randsearch()
             nhid{i} = {[unitnum(i) unitnum(i)] classNum};
         end
     end
-    
     
     for i=1:trials
         hprms(i).nhid          = nhid{i};
