@@ -25,7 +25,54 @@ function crf_tm_poc(testdata)
         end
     end
     
-    crf(w, V, N, alpha, gam, beta)
+    for i=1:100
+        [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, N, alpha, gam, beta, 20);
+        
+        [n_jk, n_k_] = count_jk(topicMat, N, K);
+        assert(isequal(n_k, n_k_), 'n_k count is inconsistent');
+        
+        if mod(i,20) == 0
+            [n_kv] = count_kv(topicMat, w, K, V);
+            assert(isequal(n_kv', n_kv_), 'n_kv count is inconsistent');
+        end
+        
+        pi = dirichletrnd([gam; m_k]);
+        theta = ltopicrnd(pi, alpha, n_jk, N, K);
+        phi = twordrnd(V, K, n_kv', beta);
+        
+        %{
+        fprintf('-before-\n');
+        [K_mean] = mean_k(gam, M);
+        fprintf(' K = %d (gam = %3.3f: %3.3f)\n', K, gam, K_mean);
+
+        M_mean = mean_m(alpha, n_j);
+        fprintf(' M = %d (alpha = %3.3f: %3.3f)\n', M, alpha, M_mean);
+        
+        [gam, alpha] = hyprprmrnd(K, M, gam, alpha, n_j, a_gam, b_gam, a_alpha, b_alpha);
+        
+        fprintf('-after-\n');
+        [K_mean] = mean_k(gam, M);
+        fprintf(' K = %d (gam = %3.3f: %3.3f)\n', K, gam, K_mean);
+
+        M_mean = mean_m(alpha, n_j);
+        fprintf(' M = %d (alpha = %3.3f: %3.3f)\n', M, alpha, M_mean);
+        %}
+        
+        drawdist(pi, theta, phi, 3);
+        [perp, loglik] = wordperp(theta, phi, w, N, K, n_j);
+        perplexity(i) = perp;
+        L(:,i) = loglik;
+        
+        figure(5);
+        subplot(2,1,1);imagesc(L(:,1:i));colorbar;
+        subplot(2,1,2);plot(perplexity(1:i));
+        
+        printTopics(N, K, theta, phi, vocabulary);
+        
+        fprintf(' alpha = %3.3f, gamma = %3.3f, beta = %3.3f, K = %d, perplexity = %3.3f\n'...
+            , alpha, gam, beta, K, perplexity(i));
+    end
+    
     topicMat = w;
     for i = 1:N
         topicMat{i} = ones(length(w{i}),1);
@@ -238,11 +285,7 @@ function crf_tm_poc(testdata)
         % Sampling of document-topic distribution
         dtTime = tic;
         fprintf(' Sampling of document-topic distribution');
-        for d=1:N
-            alpha_vec = pi.*alpha;
-            alpha_vec(2:K+1,1) = alpha_vec(2:K+1,1) + N_dk(:,d);
-            theta(:,d) = dirichletrnd(alpha_vec);
-        end
+        theta = ltopicrnd(pi, alpha, N_dk, N, K);
         t = toc(dtTime);
         fprintf(' (%3.3f sec)\n', t);
         
@@ -272,116 +315,44 @@ function crf_tm_poc(testdata)
         % Sample word-topic distribution
         fprintf(' Estimate word-topic distribution');
         wtTime = tic;
-        phi = zeros(V, K);
-        for k=1:K
-            phi(:,k) = dirichletrnd(N_kv(:,k) + beta);
-        end
+        phi = twordrnd(V, K, N_kv, beta);
         t = toc(wtTime);
         fprintf(' (%3.3f sec)\n', t);
         
         % Sampling of hyper-parameters
-        K_mean = 1;
-        for i=1:M-1
-            K_mean = K_mean + gam/(gam + i);
-        end
-        fprintf(' K = %d (gam %3.3f <%3.3f>)\n', K, gam, K_mean);
-
-        M_mean = 1;
-        for d=1:N
-            for i=1:n_j(d)-1
-                M_mean = M_mean + alpha/(alpha + i);
-            end
-        end
-        fprintf(' M = %d (alpha %3.3f <%3.3f>)\n', M, alpha, M_mean);
-
-        %%{
         if itr > 1000
-            fprintf(' Sampling of hyper-parameters');
-            shTime = tic;
-            I = ones(N,1);
-            gam_start = gam;
-            alp_start = alpha;
+            fprintf('-before-\n');
+            [K_mean] = mean_k(gam, M);
+            fprintf(' K = %d (gam = %3.3f: %3.3f)\n', K, gam, K_mean);
 
-            w_j = betarnd((gam+1), M);
-            B = b_gam - log(w_j);
-            s_j = binornd(1, M/(gam + M));
-            A = a_gam + K - s_j;
-            
-            gam = gamrnd(A, 1/B);
+            M_mean = mean_m(alpha, n_j);
+            fprintf(' M = %d (alpha = %3.3f: %3.3f)\n', M, alpha, M_mean);
 
-            w_j = betarnd(repmat(alpha+1,N,1), n_j);
-            B = b_alpha - sum(log(w_j));
-            s_j = binornd(I, n_j./(alpha + n_j));
-            A = a_alpha + M - sum(s_j);
-            
-            alpha = gamrnd(A, 1/B);
-            
-            t = toc(shTime);
-            fprintf(' (%3.3f sec)\n', t);
+            [gam, alpha] = hyprprmrnd(K, M, gam, alpha, n_j, a_gam, b_gam, a_alpha, b_alpha);
 
-            K_mean_pre = 1;
-            K_mean_post = 1;
-            for i=1:M-1
-                K_mean_pre = K_mean_pre + gam_start/(gam_start + i);
-                K_mean_post = K_mean_post + gam/(gam + i);
-            end
-            fprintf('  K = %d (gam_pre = %3.3f <%3.3f>, gam_post %3.3f <%3.3f>)\n',...
-                K, gam_start, K_mean_pre, gam, K_mean_post);
+            fprintf('-after-\n');
+            [K_mean] = mean_k(gam, M);
+            fprintf(' K = %d (gam = %3.3f: %3.3f)\n', K, gam, K_mean);
 
-            M_mean_pre = 1;
-            M_mean_post = 1;
-            for d=1:N
-                for i=1:n_j(d)-1
-                    M_mean_pre = M_mean_pre + alp_start/(alp_start + i);
-                    M_mean_post = M_mean_post + alpha/(alpha + i);
-                end
-            end
-            fprintf('  M = %d (alp_pre = %3.3f <%3.3f>, alp_post %3.3f <%3.3f>)\n',...
-                M, alp_start, M_mean_pre, alpha, M_mean_post);
+            M_mean = mean_m(alpha, n_j);
+            fprintf(' M = %d (alpha = %3.3f: %3.3f)\n', M, alpha, M_mean);
         end
-        %}
         
         % Estimate Dirichlet beta
         %beta = fixeditr(N_kv, N_k, beta, V);
         
         % Log-likelihood & perplexity
-        for d=1:N
-            for n=1:n_j(d)
-                L_buf = 0;
-                for k=1:K
-                    L_buf = L_buf + theta(k+1,d) * phi(w{d}(n),k);
-                end
-                L(d,itr) = L(d,itr) + log(L_buf);
-            end
-        end
+        [perp, loglik] = wordperp(theta, phi, w, N, K, n_j);
+        perplexity(itr) = perp;
+        L(:,itr) = loglik;
         
-        perplexity(itr) = exp(-sum(L(:,itr))/sum(n_j));
         figure(1);
         subplot(2,1,1);imagesc(L(:,1:itr));colorbar;
         subplot(2,1,2);plot(perplexity(1:itr));
         
         % Summary
-        figure(2); 
-        subplot(1,12,1); imagesc(pi); caxis([0 1]); set(gca, 'XTick', []);
-        subplot(1,12,3:12); imagesc(theta); caxis([0 1]);
-        figure(3); imagesc(phi'); caxis([0 1]);
-        drawnow();
-        
-        for d=1:N        
-            fprintf(' Top 10 frequent words of each topic in document No.%d\n', d);
-            
-            [p, topic_idx] = sort(theta(2:K+1,d), 'descend');
-            
-            topidx = find(p > 1e-2);
-            topidx_l = length(topidx);
-            buf = cell(1, topidx_l);
-            
-            for k=1:topidx_l
-                [A, idx] = sort(phi(:,topic_idx(k)), 'descend');
-                buf{k} = [vocabulary(idx(1:10)) num2cell(A(1:10))];
-            end
-            disp([buf{:}]);
-        end
+        drawdist(pi, theta, phi, 3)
+        printTopics(N, K, theta, phi, vocabulary)
         
         t = toc(totalTime);
         fprintf(' Total elapsed time %3.3f\n', t);
@@ -391,6 +362,68 @@ function crf_tm_poc(testdata)
     
     fprintf('Finished\n');
     diary off;
+end
+
+function printTopics(J, K, theta, phi, vocabulary)
+    for j=1:J        
+        fprintf(' Top 10 frequent words of each topic in document No.%d\n', j);
+
+        [p, topic_idx] = sort(theta(2:K+1,j), 'descend');
+
+        topidx = find(p > 5e-2);
+        topidx_l = length(topidx);
+        buf = cell(1, topidx_l);
+
+        for k=1:topidx_l
+            [A, idx] = sort(phi(:,topic_idx(k)), 'descend');
+            buf{k} = [vocabulary(idx(1:10)) num2cell(A(1:10))];
+        end
+        disp([buf{:}]);
+    end
+end
+
+function K_mean = mean_k(gam, M)
+    K_mean = 1;
+    
+    for i=1:M-1
+        K_mean = K_mean + gam/(gam + i);
+    end
+end
+
+function M_mean = mean_m(alpha, n_j)
+    M_mean = 0;
+    J = length(n_j);
+    
+    for j=1:J
+        buf = 1;
+        
+        for i=1:n_j(j)-1
+            buf = buf + alpha/(alpha + i);
+        end
+        
+        M_mean = M_mean + buf;
+    end
+end
+
+function [gam, alpha] = hyprprmrnd(K, M, gam, alpha, n_j, a_gam, b_gam, a_alpha, b_alpha)
+    J = length(n_j);
+    I = ones(J,1);
+    
+    for i=1:50
+        w_j = betarnd((gam+1), M);
+        B = b_gam - log(w_j);
+        s_j = binornd(1, M/(gam + M));
+        A = a_gam + K - s_j;
+
+        gam = gamrnd(A, 1/B);
+
+        w_j = betarnd(repmat(alpha+1,J,1), n_j);
+        B = b_alpha - sum(log(w_j));
+        s_j = binornd(I, n_j./(alpha + n_j));
+        A = a_alpha + M - sum(s_j);
+
+        alpha = gamrnd(A, 1/B);
+    end
 end
 
 function beta = fixeditr(N_kv, N_k, beta, V)
@@ -441,9 +474,39 @@ function [K, p] = crp(N, alpha)
     p = p./sum(p);
 end
 
+function drawdist(pi, theta, phi, fignum)
+    figure(fignum); 
+    subplot(1,12,1); imagesc(pi); caxis([0 1]); set(gca, 'XTick', []);
+    subplot(1,12,3:12); imagesc(theta); caxis([0 1]);
+    
+    figure(fignum+1); imagesc(phi'); caxis([0 1]);
+    
+    drawnow();
+end
+
+function [perp, L] = wordperp(theta, phi, w, J, K, n_j)
+    L = zeros(J, 1);
+
+    for j=1:J
+        for n=1:n_j(j)
+            L_buf = 0;
+            for k=1:K
+                L_buf = L_buf + theta(k+1,j) * phi(w{j}(n),k);
+            end
+            L(j) = L(j) + log(L_buf);
+        end
+    end
+
+    perp = exp(-sum(L)/sum(n_j));
+end
+
 %phi<j,t>, t<j,i>, theta<j,i>, k<j,t>, n<j,k,t>
-function crf(w, V, J, alpha, gam, beta)
+function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, maxitr)
     % Setup
+    if ~exist('maxitr','var')
+        maxitr = 100;
+    end
+    
     K = 0;
     M = 0;
 
@@ -469,7 +532,7 @@ function crf(w, V, J, alpha, gam, beta)
     loggam_betaV = loggamaprx(betaV);
     Vloggam_beta = V*log(gamma((beta)));
     
-    for itr=1:100
+    for itr=1:maxitr
         fprintf('iteration: %d\n', itr);
         
         % Sampling tables
@@ -738,6 +801,7 @@ function crf(w, V, J, alpha, gam, beta)
     end
 end
 
+%% deletion of topics
 function [K, n_k, n_kv, m_k, topicMat, phi] = deleteTopics(k, K, V, J, n_k, n_kv, m_k, topicMat, phi)
     K = K - 1;
 
@@ -764,9 +828,73 @@ function [K, n_k, n_kv, m_k, topicMat, phi] = deleteTopics(k, K, V, J, n_k, n_kv
     end
 end
 
-function y = loggamaprx(x)
-    % A = loggamaprx(50);
-    % B = log(gamma(50));
+%% topic-word distribution
+function phi = twordrnd(V, K, n_kv, beta)
+    phi = zeros(V, K);
     
+    for k=1:K
+        phi(:,k) = dirichletrnd(n_kv(:,k) + beta);
+    end
+end
+
+%% document-topic distribution
+function theta = ltopicrnd(pi, alpha, n_jk, J, K)
+    theta = zeros(K+1, J);
+
+    for j=1:J
+        alpha_vec = pi.*alpha;
+        alpha_vec(2:K+1,1) = alpha_vec(2:K+1,1) + n_jk(:,j);
+        
+        theta(:,j) = dirichletrnd(alpha_vec);
+    end
+end
+
+%% count n_jk & n_k
+function [n_jk, n_k] = count_jk(topicMat, J, K)
+    n_jk = zeros(K, J);
+    n_k  = zeros(K, 1);
+    
+    for k=1:K
+        n_jk(k,:) = cell2mat(cellfun(@(x) length(find(x==k)), topicMat, 'UniformOutput', false))';
+        
+        topic_idx = cellfun(@(x) x == k, topicMat, 'UniformOutput', false);
+        topic_idx = cellfun(@(x) x(:), topic_idx, 'UniformOutput', false);
+        numk = cellfun(@(x) length(x(x)), topic_idx, 'UniformOutput', false);
+        
+        n_k(k) = sum([numk{:}]);
+    end
+end
+
+%% count n_kv
+function [n_kv] = count_kv(topicMat, w, K, V)
+    n_kv = zeros(V, K);
+    
+    for k=1:K
+        topic_idx = cellfun(@(x) x == k, topicMat, 'UniformOutput', false);
+        topic_idx = cellfun(@(x) x(:), topic_idx, 'UniformOutput', false);
+
+        fprintf('K = %d/%d, N_kv: ', k, K);
+        for v=1:V
+            msg = sprintf('%d/%d', v, V);
+            fprintf(msg);
+            
+            word_idx = cellfun(@(x) x == v, w, 'UniformOutput', false);
+            word_idx = cellfun(@(x) x(:), word_idx, 'UniformOutput', false);
+            numk = cellfun(@(x,y) length(find(x & y)), word_idx, topic_idx, 'UniformOutput', false);
+            
+            n_kv(v,k) = sum([numk{:}]);
+            
+            fprintf(repmat('\b',1,length(msg)));
+        end
+
+        fprintf('...\n');
+    end
+end
+
+%% approximation of log-gamma function
+% For example, compare result of the calculation below.
+% A = loggamaprx(50);
+% B = log(gamma(50));
+function y = loggamaprx(x)
     y = 0.5*(log(2*pi) - log(x)) + x*(log(x + 1/(12*x - 1/(10*x))) - 1);
 end
