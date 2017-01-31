@@ -1,9 +1,16 @@
 function crf_tm_poc(testdata)
     %% Setup
+    if strcmp(computer, 'PCWIN64')
+        slash = '\';
+    elseif strcmp(computer, 'MACI64')
+        slash = '/';
+    end
+    
     logfilename = strcat('result_rev5_', sprintf('%5.3f',now),'.txt'); 
     homedir = userpath;
     homedir = homedir(1:(length(homedir) - 1));
-    logging = strcat(homedir,'/logs/HDM/',logfilename);
+    logging = strcat(homedir,slash,'logs',slash,'HDM',slash,logfilename);
+    %fclose(fopen(logging, 'w'));
     diary(logging);
     fprintf('*** Experiment %5.5f ***\n', now);
     
@@ -651,8 +658,8 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
              ,'CRF: n_j, n_k and n_jt is incosistent');
         
         figure(1);
-        subplot(211); stem(m_k, 'MarkerSize', 0); title('m_k');
-        subplot(212); stem(n_k, 'MarkerSize', 0); title('n_k');
+        subplot(211); stem(m_k, 'Marker', 'None'); title('m_k');
+        subplot(212); stem(n_k, 'Marker', 'None'); title('n_k');
         
         figure(2);
         imagesc(n_kv); caxis([0 max(max(n_kv))]); set(gca, 'XTick', []); title('n_k_v');
@@ -749,8 +756,8 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
         assert(isequal(n_jt{j}, sum(n_jtv{j},2)), 'CRF: n_jt and n_jtv is incosistent');
         
         figure(1);
-        subplot(211); stem(m_k, 'MarkerSize', 0); title('m_k');
-        subplot(212); stem(n_k, 'MarkerSize', 0); title('n_k');
+        subplot(211); stem(m_k, 'Marker', 'None'); title('m_k');
+        subplot(212); stem(n_k, 'Marker', 'None'); title('n_k');
         
         figure(2);
         imagesc(n_kv); caxis([0 max(max(n_kv))]); set(gca, 'XTick', []); title('n_k_v');
