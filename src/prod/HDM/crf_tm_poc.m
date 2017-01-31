@@ -1,7 +1,14 @@
 function crf_tm_poc(testdata)
+    %% Setup
+    logfilename = strcat('result_rev5_', sprintf('%5.3f',now),'.txt'); 
+    homedir = userpath;
+    homedir = homedir(1:(length(homedir) - 1));
+    logging = strcat(homedir,'/logs/HDM/',logfilename);
+    diary(logging);
+    fprintf('*** Experiment %5.5f ***\n', now);
+    
     %% Test setting
     maxitr = 100; % Number of iterations for inference
-    filename = strcat('result_rev5_', sprintf('%5.3f',now),'.txt'); 
     
     load(testdata);
     L = zeros(N, maxitr);
@@ -25,15 +32,18 @@ function crf_tm_poc(testdata)
         end
     end
     
-    for i=1:100
+    for i=1:1
         [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, N, alpha, gam, beta, 20);
         
-        [n_jk, n_k_] = count_jk(topicMat, N, K);
-        assert(isequal(n_k, n_k_), 'n_k count is inconsistent');
+        [n_jk, n_k_check] = count_jk(topicMat, N, K);
+        assert(isequal(n_k, n_k_check), 'n_k count is inconsistent');
         
         if mod(i,20) == 0
-            [n_kv] = count_kv(topicMat, w, K, V);
-            assert(isequal(n_kv', n_kv_), 'n_kv count is inconsistent');
+            K_check = count_k(topicMat);
+            assert(K == K_check, 'K count is inconsistent');
+            
+            [n_kv_check] = count_kv(topicMat, w, K, V);
+            assert(isequal(n_kv', n_kv_check), 'n_kv count is inconsistent');
         end
         
         pi = dirichletrnd([gam; m_k]);
@@ -73,63 +83,12 @@ function crf_tm_poc(testdata)
             , alpha, gam, beta, K, perplexity(i));
     end
     
-    topicMat = w;
-    for i = 1:N
-        topicMat{i} = ones(length(w{i}),1);
-    end
-    
-    %% Setup
-    homedir = userpath;
-    homedir = homedir(1:(length(homedir) - 1));
-    logging = strcat(homedir,'/logs/HDM/',filename);
-    diary(logging);
-    fprintf('*** Experiment %5.5f ***\n', now);
-    
-    % number of words in each document
-    n_j = cell2mat(cellfun(@(x) length(x), w, 'UniformOutput', false));
-    
-    % K
-    uniqueT = cellfun(@(x) unique(x), topicMat, 'UniformOutput', false);
-    numelem = cellfun(@(x) length(x), uniqueT, 'UniformOutput', false);
-    numelemsum = sum([numelem{:}]);
-    k_array = zeros(numelemsum,1);
-    counter = 1;
-    for i=1:N
-        for k=1:numelem{i}
-            k_array(counter) = uniqueT{i}(k);
-            counter = counter + 1;
-        end
-    end
-    K = length(unique(k_array));
-    
     %% Count items
     diary off
-    N_k  = zeros(K, 1);
-    N_kv = zeros(V, K);
-    N_dk = zeros(K, N);
-    for k=1:K
-        topic_idx = cellfun(@(x) x == k, topicMat, 'UniformOutput', false);
-        topic_idx = cellfun(@(x) x(:), topic_idx, 'UniformOutput', false);
-        numk = cellfun(@(x) length(x(x)), topic_idx, 'UniformOutput', false);
-        N_k(k) = sum([numk{:}]);
-
-        fprintf('K = %d/%d, N_kv: ', k, K);
-        for v=1:V
-            msg = sprintf('%d/%d', v, V);
-            fprintf(msg);
-            
-            word_idx = cellfun(@(x) x == v, w, 'UniformOutput', false);
-            word_idx = cellfun(@(x) x(:), word_idx, 'UniformOutput', false);
-            numk = cellfun(@(x,y) length(find(x & y)), word_idx, topic_idx, 'UniformOutput', false);
-            N_kv(v,k) = sum([numk{:}]);
-            
-            fprintf(repmat('\b',1,length(msg)));
-        end
-
-        N_dk(k,:) = cell2mat(cellfun(@(x) length(find(x==k)), topicMat, 'UniformOutput', false))';
-
-        fprintf('...\n');
-    end
+    n_j = cell2mat(cellfun(@(x) length(x), w, 'UniformOutput', false));
+    K = count_k(topicMat);
+    [N_dk, N_k] = count_jk(topicMat, N, K);
+    [N_kv] = count_kv(topicMat, w, K, V);
     diary on;
     
     if ~exist('theta','var')
@@ -141,7 +100,7 @@ function crf_tm_poc(testdata)
         pi = pi./sum(pi);
     end
         
-    %% Chinese Restaurnt Franchising
+    %% Sampling from posterior
     for itr=1:maxitr
         totalTime = tic;
         fprintf('--Iteration %d--\n', itr);
@@ -847,6 +806,26 @@ function theta = ltopicrnd(pi, alpha, n_jk, J, K)
         
         theta(:,j) = dirichletrnd(alpha_vec);
     end
+end
+
+function K = count_k(topicMat)
+    J = length(topicMat);
+
+    uniqueT = cellfun(@(x) unique(x), topicMat, 'UniformOutput', false);
+    numelem = cellfun(@(x) length(x), uniqueT, 'UniformOutput', false);
+    numelemsum = sum([numelem{:}]);
+    k_array = zeros(numelemsum,1);
+    
+    counter = 1;
+    
+    for d=1:J
+        for k=1:numelem{d}
+            k_array(counter) = uniqueT{d}(k);
+            counter = counter + 1;
+        end
+    end
+    
+    K = length(unique(k_array));
 end
 
 %% count n_jk & n_k
