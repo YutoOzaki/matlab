@@ -50,12 +50,12 @@ function crf_tm_poc(testdata)
             assert(K == K_check, 'K count is inconsistent');
             
             [n_kv_check] = count_kv(topicMat, w, K, V);
-            assert(isequal(n_kv', n_kv_check), 'n_kv count is inconsistent');
+            assert(isequal(n_kv, n_kv_check), 'n_kv count is inconsistent');
         end
         
         pi = dirichletrnd([gam; m_k]);
         theta = ltopicrnd(pi, alpha, n_jk, N, K);
-        phi = twordrnd(V, K, n_kv', beta);
+        phi = twordrnd(V, K, n_kv, beta);
         
         %{
         fprintf('-before-\n');
@@ -93,9 +93,9 @@ function crf_tm_poc(testdata)
     %% Count items
     diary off
     n_j = cell2mat(cellfun(@(x) length(x), w, 'UniformOutput', false));
-    K = count_k(topicMat);
-    [N_dk, N_k] = count_jk(topicMat, N, K);
-    [N_kv] = count_kv(topicMat, w, K, V);
+    %K = count_k(topicMat);
+    [n_jk, n_k] = count_jk(topicMat, N, K);
+    %[n_kv] = count_kv(topicMat, w, K, V);
     diary on;
     
     if ~exist('theta','var')
@@ -116,134 +116,19 @@ function crf_tm_poc(testdata)
         % Sampling of topic
         tsTime = tic;
         fprintf(' Sampling of topic');
-        docidx = randperm(N);
-        
-        p = zeros(1+K+1, 1); %p(1) = 0, p(2) = k_1, p(3) = k_2, ..., p(K+1) = k_K, p(K+2) = k_0
-                
         diary off;
-        for d=1:N
-            str = sprintf('\n (%d/%d)', d, N);
-            strlen = length(str);
-            fprintf(str);
-            
-            d_idx = docidx(d);
-            W = n_j(d_idx);
-            r = rand(W,1);
-            
-            for n=1:W
-                v = w{d_idx}(n);
-                z_dn = topicMat{d_idx}(n);
-                
-                N_k(z_dn, 1) = N_k(z_dn, 1) - 1;
-                N_kv(v, z_dn) = N_kv(v, z_dn) - 1;
-                N_dk(z_dn, d_idx) = N_dk(z_dn, d_idx) - 1;
-                
-                for k=1:K
-                    f_k = (N_kv(v,k)+beta) / (N_k(k,1)+beta*V);
-                    tmp = N_dk(k,d_idx) + alpha*pi(k+1);
-
-                    p(k+1) = tmp * f_k + p(k);
-                end
-                f_k = 1/V;
-                tmp = alpha*pi(1);
-                p(K+2) =  tmp * f_k + p(K+1);
-
-                p = p ./ p(end);
-                
-                idx = find(p < r(n));
-                z = idx(end);
-                
-                % spawn new topic
-                if z == (K+1)
-                    K = K + 1;
-                    
-                    mu_0 = betarnd(1, gam);
-                    pi_new_0 = pi(1) * (1 - mu_0);
-                    pi_new_K = pi(1) * mu_0;
-                    
-                    pi_new = zeros(K+1,1);
-                    pi_new(1) = pi_new_0;
-                    pi_new(2:K) = pi(2:K);
-                    pi_new(K+1) = pi_new_K;
-                    
-                    mu_d = betarnd(alpha*pi(1)*mu_0, alpha*pi(1)*(1 - mu_0), 1, N);
-                    theta_new_0 = theta(1,:).*(1 - mu_d);
-                    theta_new_K = theta(1,:).*mu_d;
-                    
-                    theta_new = zeros(K+1,N);
-                    theta_new(1,:) = theta_new_0;
-                    theta_new(2:K,:) = theta(2:K,:);
-                    theta_new(K+1,:) = theta_new_K;
-                    
-                    pi = pi_new;
-                    theta = theta_new;
-                    
-                    p = zeros(1+K+1, 1);
-                    
-                    N_k = [N_k; 0];
-                    N_kv = [N_kv zeros(V,1)];
-                    N_dk = [N_dk; zeros(1, N)];
-                end
-                
-                topicMat{d_idx}(n) = z;
-                N_k(z, 1) = N_k(z, 1) + 1;
-                N_kv(v, z) = N_kv(v, z) + 1;
-                N_dk(z, d_idx) = N_dk(z, d_idx) + 1;
-                
-                % Pack empty topic
-                if N_k(z_dn) == 0
-                    pi_new = zeros(K, 1);
-                    pi_new(1:z_dn) = pi(1:z_dn);
-                    pi_new(z_dn+1:K) = pi(z_dn+2:K+1);
-                    pi_new(1) = pi_new(1) + pi(z_dn+1);
-                    pi = pi_new;
-                    
-                    theta_new = zeros(K, N);
-                    theta_new(1:z_dn,:) = theta(1:z_dn,:);
-                    theta_new(z_dn+1:K,:) = theta(z_dn+2:K+1,:);
-                    theta_new(1,:) = theta_new(1,:) + theta(z_dn+1,:);
-                    theta = theta_new;
-                    
-                    K = K - 1;
-                    
-                    N_k_new = zeros(K, 1);
-                    N_k_new(1:z_dn-1) = N_k(1:z_dn-1);
-                    N_k_new(z_dn:K) = N_k(z_dn+1:K+1);
-                    N_k = N_k_new;
-                    
-                    N_kv_new = zeros(V, K);
-                    N_kv_new(:,1:z_dn-1) = N_kv(:,1:z_dn-1);
-                    N_kv_new(:,z_dn:K) = N_kv(:,z_dn+1:K+1);
-                    N_kv = N_kv_new;
-                    
-                    N_dk_new = zeros(K, N);
-                    N_dk_new(1:z_dn-1,:) = N_dk(1:z_dn-1,:);
-                    N_dk_new(z_dn:K,:) = N_dk(z_dn+1:K+1,:);
-                    N_dk = N_dk_new;
-                    
-                    idx = cellfun(@(x) find(x > z_dn), topicMat, 'UniformOutput', false);
-                    for i=1:N
-                        topicMat{i}(idx{i}) = topicMat{i}(idx{i}) - 1;
-                    end
-                    
-                    p = zeros(1+K+1, 1);
-                end
-            end
-            
-            str = repmat('\b', 1, strlen);
-            fprintf(str);
-        end
+        [topicMat, K, n_k, n_kv, n_jk, pi, ~] = directassignment(N, K, V, w, topicMat, n_j, n_k, n_kv, n_jk, alpha, beta, gam, pi, theta);
         diary on;
         t = toc(tsTime);
         fprintf(' (%3.3f sec)\n', t);
         
-        assert(sum(n_j) == sum(N_k), 'N_k count is corrupted');
-        assert(sum(n_j) == sum(sum(N_kv)), 'N_kv count is corrupted');
-        assert(sum(n_j) == sum(sum(N_dk)), 'N_dk count is corrupted');
+        assert(sum(n_j) == sum(n_k), 'N_k count is corrupted');
+        assert(sum(n_j) == sum(sum(n_kv)), 'N_kv count is corrupted');
+        assert(sum(n_j) == sum(sum(n_jk)), 'N_dk count is corrupted');
         
-        assert(isempty(find(N_k < 1, 1)), 'N_k contains minus');
-        assert(isempty(find(N_kv < 0, 1)), 'N_kv contains minus');
-        assert(isempty(find(N_dk < 0, 1)), 'N_dk contains minus');
+        assert(isempty(find(n_k < 1, 1)), 'N_k contains minus');
+        assert(isempty(find(n_kv < 0, 1)), 'N_kv contains minus');
+        assert(isempty(find(n_jk < 0, 1)), 'N_dk contains minus');
         
         A = cellfun(@(x) find(x < 1), topicMat, 'UniformOutput', false);
         cellfun(@(x) assert(isempty(x), 'null topic is contained'), A, 'UniformOutput', false);
@@ -251,7 +136,7 @@ function crf_tm_poc(testdata)
         % Sampling of document-topic distribution
         dtTime = tic;
         fprintf(' Sampling of document-topic distribution');
-        theta = ltopicrnd(pi, alpha, N_dk, N, K);
+        theta = ltopicrnd(pi, alpha, n_jk, N, K);
         t = toc(dtTime);
         fprintf(' (%3.3f sec)\n', t);
         
@@ -266,7 +151,7 @@ function crf_tm_poc(testdata)
             M_k = 0;
             
             for d=1:N
-                [M_dk, ~] = crp(N_dk(k,d), alpha*pi(k+1));
+                [M_dk, ~] = crp(n_jk(k,d), alpha*pi(k+1));
                 M_k = M_k + M_dk;
             end
 
@@ -281,7 +166,7 @@ function crf_tm_poc(testdata)
         % Sample word-topic distribution
         fprintf(' Estimate word-topic distribution');
         wtTime = tic;
-        phi = twordrnd(V, K, N_kv, beta);
+        phi = twordrnd(V, K, n_kv, beta);
         t = toc(wtTime);
         fprintf(' (%3.3f sec)\n', t);
         
@@ -578,6 +463,8 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
                     cnt = cnt + 1;
                 end
 
+                %t_new = alpha * sum(m_k./(M + gam) .* (n_kv(:,v) + beta)./(n_k .* betaV)) + gam/(M + gam) / V;
+                
                 for k=1:K
                     p(cnt + 1) = alpha * m_k(k) / (M + gam) * (n_kv(k,v) + beta) / (n_k(k) + betaV) + p(cnt);
                     cnt = cnt + 1;
@@ -767,6 +654,124 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
     end
 end
 
+function [topicMat, K, n_k, n_kv, n_jk, pi, theta] = directassignment(J, K, V, w, topicMat, n_j, n_k, n_kv, n_jk, alpha, beta, gam, pi, theta)
+    docidx = randperm(J);
+    p = zeros(1+K+1, 1); %p(1) = 0, p(2) = k_1, p(3) = k_2, ..., p(K+1) = k_K, p(K+2) = k_0
+
+    for j=1:J
+        str = sprintf('\n (%d/%d)', j, J);
+        strlen = length(str);
+        fprintf(str);
+
+        d_idx = docidx(j);
+        W = n_j(d_idx);
+        r = rand(W, 1);
+
+        for n=1:W
+            v = w{d_idx}(n);
+            z_dn = topicMat{d_idx}(n);
+
+            n_k(z_dn, 1) = n_k(z_dn, 1) - 1;
+            n_kv(z_dn, v) = n_kv(z_dn, v) - 1;
+            n_jk(z_dn, d_idx) = n_jk(z_dn, d_idx) - 1;
+
+            for k=1:K
+                f_k = (n_kv(k,v)+beta) / (n_k(k,1)+beta*V);
+                tmp = n_jk(k,d_idx) + alpha*pi(k+1);
+
+                p(k+1) = tmp * f_k + p(k);
+            end
+            f_k = 1/V;
+            tmp = alpha*pi(1);
+            p(K+2) =  tmp * f_k + p(K+1);
+
+            p = p ./ p(end);
+
+            idx = find(p < r(n));
+            z = idx(end);
+
+            % spawn new topic
+            if z == (K+1)
+                K = K + 1;
+
+                mu_0 = betarnd(1, gam);
+                pi_new_0 = pi(1) * (1 - mu_0);
+                pi_new_K = pi(1) * mu_0;
+
+                pi_new = zeros(K+1,1);
+                pi_new(1) = pi_new_0;
+                pi_new(2:K) = pi(2:K);
+                pi_new(K+1) = pi_new_K;
+
+                mu_d = betarnd(alpha*pi(1)*mu_0, alpha*pi(1)*(1 - mu_0), 1, J);
+                theta_new_0 = theta(1,:).*(1 - mu_d);
+                theta_new_K = theta(1,:).*mu_d;
+
+                theta_new = zeros(K+1,J);
+                theta_new(1,:) = theta_new_0;
+                theta_new(2:K,:) = theta(2:K,:);
+                theta_new(K+1,:) = theta_new_K;
+
+                pi = pi_new;
+                theta = theta_new;
+
+                p = zeros(1+K+1, 1);
+
+                n_k = [n_k; 0];
+                n_kv = [n_kv; zeros(1, V)];
+                n_jk = [n_jk; zeros(1, J)];
+            end
+
+            topicMat{d_idx}(n) = z;
+            n_k(z, 1) = n_k(z, 1) + 1;
+            n_kv(z, v) = n_kv(z, v) + 1;
+            n_jk(z, d_idx) = n_jk(z, d_idx) + 1;
+
+            % Pack empty topic
+            if n_k(z_dn) == 0
+                pi_new = zeros(K, 1);
+                pi_new(1:z_dn) = pi(1:z_dn);
+                pi_new(z_dn+1:K) = pi(z_dn+2:K+1);
+                pi_new(1) = pi_new(1) + pi(z_dn+1);
+                pi = pi_new;
+
+                theta_new = zeros(K, J);
+                theta_new(1:z_dn,:) = theta(1:z_dn,:);
+                theta_new(z_dn+1:K,:) = theta(z_dn+2:K+1,:);
+                theta_new(1,:) = theta_new(1,:) + theta(z_dn+1,:);
+                theta = theta_new;
+
+                K = K - 1;
+
+                N_k_new = zeros(K, 1);
+                N_k_new(1:z_dn-1) = n_k(1:z_dn-1);
+                N_k_new(z_dn:K) = n_k(z_dn+1:K+1);
+                n_k = N_k_new;
+
+                n_kv_new = zeros(K, V);
+                n_kv_new(1:z_dn-1, :) = n_kv(1:z_dn-1, :);
+                n_kv_new(z_dn:K, :) = n_kv(z_dn+1:K+1, :);
+                n_kv = n_kv_new;
+
+                n_jk_new = zeros(K, J);
+                n_jk_new(1:z_dn-1,:) = n_jk(1:z_dn-1,:);
+                n_jk_new(z_dn:K,:) = n_jk(z_dn+1:K+1,:);
+                n_jk = n_jk_new;
+
+                idx = cellfun(@(x) find(x > z_dn), topicMat, 'UniformOutput', false);
+                for i=1:J
+                    topicMat{i}(idx{i}) = topicMat{i}(idx{i}) - 1;
+                end
+
+                p = zeros(1+K+1, 1);
+            end
+        end
+
+        str = repmat('\b', 1, strlen);
+        fprintf(str);
+    end
+end
+
 %% deletion of topics
 function [K, n_k, n_kv, m_k, topicMat, phi] = deleteTopics(k, K, V, J, n_k, n_kv, m_k, topicMat, phi)
     K = K - 1;
@@ -799,7 +804,7 @@ function phi = twordrnd(V, K, n_kv, beta)
     phi = zeros(V, K);
     
     for k=1:K
-        phi(:,k) = dirichletrnd(n_kv(:,k) + beta);
+        phi(:,k) = dirichletrnd(n_kv(k, :) + beta);
     end
 end
 
@@ -853,7 +858,7 @@ end
 
 %% count n_kv
 function [n_kv] = count_kv(topicMat, w, K, V)
-    n_kv = zeros(V, K);
+    n_kv = zeros(K, V);
     
     for k=1:K
         topic_idx = cellfun(@(x) x == k, topicMat, 'UniformOutput', false);
@@ -868,7 +873,7 @@ function [n_kv] = count_kv(topicMat, w, K, V)
             word_idx = cellfun(@(x) x(:), word_idx, 'UniformOutput', false);
             numk = cellfun(@(x,y) length(find(x & y)), word_idx, topic_idx, 'UniformOutput', false);
             
-            n_kv(v,k) = sum([numk{:}]);
+            n_kv(k,v) = sum([numk{:}]);
             
             fprintf(repmat('\b',1,length(msg)));
         end
