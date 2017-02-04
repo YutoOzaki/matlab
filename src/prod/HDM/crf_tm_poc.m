@@ -39,8 +39,9 @@ function crf_tm_poc(testdata)
         end
     end
     
-    for i=1:1
-        [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, N, alpha, gam, beta, 3);
+    for i=1:0
+        [topicMat, K, n_k, n_kv, n_jk, pi, theta] = directassignment(N, 0, V, w, topicMat, n_j, [], [], [], alpha, beta, gam, 1, ones(N,1), init);
+        %[m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, N, alpha, gam, beta, 3);
         
         [n_jk, n_k_check] = count_jk(topicMat, N, K);
         assert(isequal(n_k, n_k_check), 'n_k count is inconsistent');
@@ -92,10 +93,16 @@ function crf_tm_poc(testdata)
     
     %% Count items
     diary off
-    n_j = cell2mat(cellfun(@(x) length(x), w, 'UniformOutput', false));
     %K = count_k(topicMat);
-    [n_jk, n_k] = count_jk(topicMat, N, K);
+    %[n_jk, n_k] = count_jk(topicMat, N, K);
     %[n_kv] = count_kv(topicMat, w, K, V);
+    
+    n_j = cell2mat(cellfun(@(x) length(x), w, 'UniformOutput', false));
+    topicMat = w;
+    init = true;
+    [topicMat, K, n_k, n_kv, n_jk, pi, theta] = directassignment(N, 0, V, w, topicMat, n_j, [], [], [], alpha, beta, gam, 1, ones(N,1), init);
+    init = false;
+    
     diary on;
     
     if ~exist('theta','var')
@@ -110,14 +117,14 @@ function crf_tm_poc(testdata)
     %% Sampling from posterior
     for itr=1:maxitr
         totalTime = tic;
-        fprintf('--Iteration %d--\n', itr);
+        fprintf('\n--Iteration %d--\n', itr);
         
         %% Direct assignment scheme
         % Sampling of topic
         tsTime = tic;
         fprintf(' Sampling of topic');
         diary off;
-        [topicMat, K, n_k, n_kv, n_jk, pi, ~] = directassignment(N, K, V, w, topicMat, n_j, n_k, n_kv, n_jk, alpha, beta, gam, pi, theta);
+        [topicMat, K, n_k, n_kv, n_jk, pi, ~] = directassignment(N, K, V, w, topicMat, n_j, n_k, n_kv, n_jk, alpha, beta, gam, pi, theta, init);
         diary on;
         t = toc(tsTime);
         fprintf(' (%3.3f sec)\n', t);
@@ -147,7 +154,12 @@ function crf_tm_poc(testdata)
         alpha_vec = zeros(K+1,1);
         alpha_vec(1) = gam;
         M = 0;
+        diary off;
         for k=1:K
+            str = sprintf(' (%d/%d)', k, K);
+            strlen = length(str);
+            fprintf(str);
+
             M_k = 0;
             
             for d=1:N
@@ -157,7 +169,11 @@ function crf_tm_poc(testdata)
 
             alpha_vec(k+1) = M_k;
             M = M + M_k;
+            
+            str = repmat('\b', 1, strlen);
+            fprintf(str);
         end
+        diary on;
         pi = dirichletrnd(alpha_vec);
         
         t = toc(gsTime);
@@ -203,13 +219,15 @@ function crf_tm_poc(testdata)
         
         % Summary
         drawdist(pi, theta, phi, 3)
-        printTopics(N, K, theta, phi, vocabulary)
+        %printTopics(N, K, theta, phi, vocabulary)
         
         t = toc(totalTime);
         fprintf(' Total elapsed time %3.3f\n', t);
-        fprintf(' alpha = %3.3f, gamma = %3.3f, beta = %3.3f, K = %d, perplexity = %3.3f\n'...
-            , alpha, gam, beta, K, perplexity(itr));
+        fprintf(' alpha = %3.3f, gamma = %3.3f, beta = %3.3f, K = %d, M = %d, perplexity = %3.3f\n'...
+            , alpha, gam, beta, K, M, perplexity(itr));
     end
+    
+    printTopics(N, K, theta, phi, vocabulary)
     
     fprintf('Finished\n');
     diary off;
@@ -354,7 +372,6 @@ end
 
 %phi<j,t>, t<j,i>, theta<j,i>, k<j,t>, n<j,k,t>
 function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, maxitr)
-    % Setup
     if ~exist('maxitr','var')
         maxitr = 100;
     end
@@ -684,14 +701,18 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
     end
 end
 
-function [topicMat, K, n_k, n_kv, n_jk, pi, theta] = directassignment(J, K, V, w, topicMat, n_j, n_k, n_kv, n_jk, alpha, beta, gam, pi, theta)
+function [topicMat, K, n_k, n_kv, n_jk, pi, theta] = directassignment(J, K, V, w, topicMat, n_j, n_k, n_kv, n_jk, alpha, beta, gam, pi, theta, init)
+    if ~exist('init','var')
+            init = false;
+    end
+    
     betaV = beta*V;
 
     docidx = randperm(J);
     p = zeros(1+K+1, 1); %p(1) = 0, p(2) = k_1, p(3) = k_2, ..., p(K+1) = k_K, p(K+2) = k_0
 
     for j=1:J
-        str = sprintf('\n (%d/%d)', j, J);
+        str = sprintf(' (%d/%d)', j, J);
         strlen = length(str);
         fprintf(str);
 
@@ -702,7 +723,7 @@ function [topicMat, K, n_k, n_kv, n_jk, pi, theta] = directassignment(J, K, V, w
         for n=1:W
             v = w{d_idx}(n);
             
-            if K > 0
+            if ~init
                 z_dn = topicMat{d_idx}(n);
 
                 n_k(z_dn, 1) = n_k(z_dn, 1) - 1;
