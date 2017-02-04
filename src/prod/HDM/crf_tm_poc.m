@@ -40,18 +40,18 @@ function crf_tm_poc(testdata)
     end
     
     for i=1:1
-        [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, N, alpha, gam, beta, 20);
+        [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, N, alpha, gam, beta, 3);
         
         [n_jk, n_k_check] = count_jk(topicMat, N, K);
         assert(isequal(n_k, n_k_check), 'n_k count is inconsistent');
         
-        if mod(i,20) == 0
-            K_check = count_k(topicMat);
-            assert(K == K_check, 'K count is inconsistent');
-            
-            [n_kv_check] = count_kv(topicMat, w, K, V);
-            assert(isequal(n_kv, n_kv_check), 'n_kv count is inconsistent');
-        end
+        %{
+        K_check = count_k(topicMat);
+        assert(K == K_check, 'K count is inconsistent');
+
+        [n_kv_check] = count_kv(topicMat, w, K, V);
+        assert(isequal(n_kv, n_kv_check), 'n_kv count is inconsistent');
+        %}
         
         pi = dirichletrnd([gam; m_k]);
         theta = ltopicrnd(pi, alpha, n_jk, N, K);
@@ -197,7 +197,7 @@ function crf_tm_poc(testdata)
         perplexity(itr) = perp;
         L(:,itr) = loglik;
         
-        figure(1);
+        figure(5);
         subplot(2,1,1);imagesc(L(:,1:itr));colorbar;
         subplot(2,1,2);plot(perplexity(1:itr));
         
@@ -277,14 +277,15 @@ function [gam, alpha] = hyprprmrnd(K, M, gam, alpha, n_j, a_gam, b_gam, a_alpha,
     end
 end
 
-function beta = fixeditr(N_kv, N_k, beta, V)
-    K = length(N_k);
+function beta = fixeditr(n_kv, n_k, beta, V)
+    K = length(n_k);
+    KV = K*V;
 
     %hist = zeros(100, 1);
     
     for i=1:100
-        num = sum(sum(psi(N_kv + beta))) - K*V*psi(beta);
-        den = V*sum(psi(N_k + beta*V)) - K*V*psi(beta*V);
+        num = sum(sum(psi(n_kv + beta))) - KV*psi(beta);
+        den = V*sum(psi(n_k + beta*V)) - KV*psi(beta*V);
         
         beta_new = beta * num / den;
         
@@ -396,7 +397,7 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
         
         for j=1:J
             T = length(n_jt{j});
-            p = zeros(1 + T + K + 1, 1);
+            p = zeros(1 + T + 1, 1);
             
             rnd = rand(n_j(j), 1);
 
@@ -451,7 +452,7 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
                             [K, n_k, n_kv, m_k, topicMat, phi] = deleteTopics(k, K, V, J, n_k, n_kv, m_k, topicMat, phi);
                         end
                         
-                        p = zeros(1 + K + T + 1, 1);
+                        p = zeros(1 + T + 1, 1);
                     end
                 end
                 
@@ -463,18 +464,11 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
                     cnt = cnt + 1;
                 end
 
-                %t_new = alpha * sum(m_k./(M + gam) .* (n_kv(:,v) + beta)./(n_k .* betaV)) + gam/(M + gam) / V;
+                p(cnt + 1) = alpha * sum(m_k./(M + gam) .* (n_kv(:,v) + beta)./(n_k .* betaV)) + gam/(M + gam) / V + p(cnt);
                 
-                for k=1:K
-                    p(cnt + 1) = alpha * m_k(k) / (M + gam) * (n_kv(k,v) + beta) / (n_k(k) + betaV) + p(cnt);
-                    cnt = cnt + 1;
-                end
-
-                p(cnt + 1) = alpha * gam / (M + gam) / V + p(cnt);
-
                 idx = find(p < p(end)*rnd(n));
                 idx = idx(end);
-
+                
                 if idx <= T
                     t = idx;
                     k = phi{j}(t);
@@ -483,51 +477,69 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
                     n_k(k) = n_k(k) + 1;
                     n_jt{j}(t) = n_jt{j}(t) + 1;
                     n_jtv{j}(t,v) = n_jtv{j}(t,v) + 1;
-                elseif T < idx && idx <= (T + K)
-                    tspawned = tspawned + 1;
+                elseif idx == (T + 1)
+                    p = zeros(1 + K + 1, 1);
                     
-                    M = M + 1;
+                    cnt = 1;
+                    
+                    for k=1:K
+                        p(cnt + 1) = m_k(k) * (n_kv(k,v) + beta) / (n_k(k) + betaV) + p(cnt);
+                        cnt = cnt + 1;
+                    end
 
-                    k = idx - T;
+                    p(cnt + 1) = gam / V + p(cnt);
                     
-                    n_kv(k,v) = n_kv(k,v) + 1;
-                    n_k(k) = n_k(k) + 1;
-                    m_k(k) = m_k(k) + 1;
-                    n_jt{j} = [n_jt{j}; 1];
+                    idx = find(p < p(end)*rand);
+                    idx = idx(end);
                     
-                    T = length(n_jt{j});
-                    p = zeros(1 + T + K + 1, 1);
-                    phi{j} = [phi{j}; k];
+                    if idx <= K
+                        tspawned = tspawned + 1;
                     
-                    t = T;
-                    
-                    n_jtv{j} = [n_jtv{j}; zeros(1,V)];
-                    n_jtv{j}(t,v) = 1;
-                elseif idx == (T + K + 1)
-                    tspawned = tspawned + 1;
-                    kspawned = kspawned + 1;
-                    
-                    M = M + 1;
-                    K = K + 1;
-                    
-                    k = K;
+                        M = M + 1;
 
-                    n_kv = [n_kv; zeros(1,V)];
-                    n_kv(k,v) = 1;
-                    n_k = [n_k; 1];
-                    m_k = [m_k; 1];
-                    n_jt{j} = [n_jt{j}; 1];
+                        k = idx;
 
-                    T = length(n_jt{j});
-                    p = zeros(1 + T + K + 1, 1);
-                    phi{j} = [phi{j}; k];
-                    
-                    t = T;
-                    
-                    n_jtv{j} = [n_jtv{j}; zeros(1,V)];
-                    n_jtv{j}(t,v) = 1;
+                        n_kv(k,v) = n_kv(k,v) + 1;
+                        n_k(k) = n_k(k) + 1;
+                        m_k(k) = m_k(k) + 1;
+                        n_jt{j} = [n_jt{j}; 1];
+
+                        T = length(n_jt{j});
+                        p = zeros(1 + T + 1, 1);
+                        phi{j} = [phi{j}; k];
+
+                        t = T;
+
+                        n_jtv{j} = [n_jtv{j}; zeros(1,V)];
+                        n_jtv{j}(t,v) = 1;
+                    elseif idx == (K + 1)
+                        tspawned = tspawned + 1;
+                        kspawned = kspawned + 1;
+
+                        M = M + 1;
+                        K = K + 1;
+
+                        k = K;
+
+                        n_kv = [n_kv; zeros(1,V)];
+                        n_kv(k,v) = 1;
+                        n_k = [n_k; 1];
+                        m_k = [m_k; 1];
+                        n_jt{j} = [n_jt{j}; 1];
+
+                        T = length(n_jt{j});
+                        p = zeros(1 + T + 1, 1);
+                        phi{j} = [phi{j}; k];
+
+                        t = T;
+
+                        n_jtv{j} = [n_jtv{j}; zeros(1,V)];
+                        n_jtv{j}(t,v) = 1;
+                    else
+                        assert(false, 'CRF: indexing is not working (new table)');
+                    end
                 else
-                    assert(false, 'CRF: indexing is not working (table)');
+                    assert(false, 'CRF: indexing is not working (existing table)');
                 end
                 
                 topicMat{j}(n) = k;
@@ -550,6 +562,8 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
         
         figure(2);
         imagesc(n_kv); caxis([0 max(max(n_kv))]); set(gca, 'XTick', []); title('n_k_v');
+        
+        drawnow();
         
         assert(M == (M_ini + tspawned - tremoved), 'add/remove count of M is inoconsistent');
         assert(K == (K_ini + kspawned - kremoved), 'add/remove count of K is inoconsistent');
@@ -585,13 +599,15 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
                 end
                 
                 cnt = 1;
+                %logp = p;
                 
                 for k=1:K
                     buf...
                         = log(m_k(k)) + loggamaprx(n_k(k) + betaV) - loggamaprx(n_k(k) + n_jt{j}(t) + betaV)...
-                        + sum(log(gamma(n_kv(k,:) + n_jtv{j}(t,:) + beta))) - sum(log(gamma(n_kv(k,:) + beta)));
+                        + sum(loggamaprx(n_kv(k,:) + n_jtv{j}(t,:) + beta)) - sum(loggamaprx(n_kv(k,:) + beta));
                     
                     p(cnt+1) = exp(buf) + p(cnt);
+                    %logp(cnt+1) = buf;
                     cnt = cnt + 1;
                 end
                 
@@ -599,7 +615,19 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
                     = log_gam + loggam_betaV - loggamaprx(n_jt{j}(t) + betaV)...
                     + sum(log(gamma(n_jtv{j}(t,:) + beta))) - Vloggam_beta;
                 p(cnt+1) = exp(buf) + p(cnt);
+                %logp(cnt+1) = buf;
                 
+                %{
+                e10order = mean(log10(abs(logp(2:end))));
+                p2 = exp(logp./(10^e10order));
+                p2(1) = 0;
+                for k=1:K+1
+                    p2(k+1) = p2(k) + p2(k+1);
+                end
+                p2 = p2./p2(end);
+                
+                idx = find(p2 < p2(end)*rnd(t));
+                %}
                 idx = find(p < p(end)*rnd(t));
                 idx = idx(end);
                 
@@ -649,12 +677,16 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
         figure(2);
         imagesc(n_kv); caxis([0 max(max(n_kv))]); set(gca, 'XTick', []); title('n_k_v');
         
+        drawnow();
+        
         assert(K == (K_ini + kspawned - kremoved), 'add/remove count of K is inoconsistent');
         fprintf('topic_num_update: %d = %d + %d - %d\n\n', K, K_ini, kspawned, kremoved);
     end
 end
 
 function [topicMat, K, n_k, n_kv, n_jk, pi, theta] = directassignment(J, K, V, w, topicMat, n_j, n_k, n_kv, n_jk, alpha, beta, gam, pi, theta)
+    betaV = beta*V;
+
     docidx = randperm(J);
     p = zeros(1+K+1, 1); %p(1) = 0, p(2) = k_1, p(3) = k_2, ..., p(K+1) = k_K, p(K+2) = k_0
 
@@ -669,14 +701,56 @@ function [topicMat, K, n_k, n_kv, n_jk, pi, theta] = directassignment(J, K, V, w
 
         for n=1:W
             v = w{d_idx}(n);
-            z_dn = topicMat{d_idx}(n);
+            
+            if K > 0
+                z_dn = topicMat{d_idx}(n);
 
-            n_k(z_dn, 1) = n_k(z_dn, 1) - 1;
-            n_kv(z_dn, v) = n_kv(z_dn, v) - 1;
-            n_jk(z_dn, d_idx) = n_jk(z_dn, d_idx) - 1;
+                n_k(z_dn, 1) = n_k(z_dn, 1) - 1;
+                n_kv(z_dn, v) = n_kv(z_dn, v) - 1;
+                n_jk(z_dn, d_idx) = n_jk(z_dn, d_idx) - 1;
+
+                % Pack empty topic
+                if n_k(z_dn) == 0
+                    pi_new = zeros(K, 1);
+                    pi_new(1:z_dn) = pi(1:z_dn);
+                    pi_new(z_dn+1:K) = pi(z_dn+2:K+1);
+                    pi_new(1) = pi_new(1) + pi(z_dn+1);
+                    pi = pi_new;
+
+                    theta_new = zeros(K, J);
+                    theta_new(1:z_dn,:) = theta(1:z_dn,:);
+                    theta_new(z_dn+1:K,:) = theta(z_dn+2:K+1,:);
+                    theta_new(1,:) = theta_new(1,:) + theta(z_dn+1,:);
+                    theta = theta_new;
+
+                    K = K - 1;
+
+                    n_k_new = zeros(K, 1);
+                    n_k_new(1:z_dn-1) = n_k(1:z_dn-1);
+                    n_k_new(z_dn:K) = n_k(z_dn+1:K+1);
+                    n_k = n_k_new;
+
+                    n_kv_new = zeros(K, V);
+                    n_kv_new(1:z_dn-1, :) = n_kv(1:z_dn-1, :);
+                    n_kv_new(z_dn:K, :) = n_kv(z_dn+1:K+1, :);
+                    n_kv = n_kv_new;
+
+                    n_jk_new = zeros(K, J);
+                    n_jk_new(1:z_dn-1,:) = n_jk(1:z_dn-1,:);
+                    n_jk_new(z_dn:K,:) = n_jk(z_dn+1:K+1,:);
+                    n_jk = n_jk_new;
+
+                    idx = cellfun(@(x) find(x > z_dn), topicMat, 'UniformOutput', false);
+                    for i=1:J
+                        topicMat{i}(idx{i}) = topicMat{i}(idx{i}) - 1;
+                    end
+
+                    p = zeros(1+K+1, 1);
+                end
+            end
 
             for k=1:K
-                f_k = (n_kv(k,v)+beta) / (n_k(k,1)+beta*V);
+                f_k = (n_kv(k,v)+beta) / (n_k(k,1)+betaV);
                 tmp = n_jk(k,d_idx) + alpha*pi(k+1);
 
                 p(k+1) = tmp * f_k + p(k);
@@ -726,45 +800,6 @@ function [topicMat, K, n_k, n_kv, n_jk, pi, theta] = directassignment(J, K, V, w
             n_k(z, 1) = n_k(z, 1) + 1;
             n_kv(z, v) = n_kv(z, v) + 1;
             n_jk(z, d_idx) = n_jk(z, d_idx) + 1;
-
-            % Pack empty topic
-            if n_k(z_dn) == 0
-                pi_new = zeros(K, 1);
-                pi_new(1:z_dn) = pi(1:z_dn);
-                pi_new(z_dn+1:K) = pi(z_dn+2:K+1);
-                pi_new(1) = pi_new(1) + pi(z_dn+1);
-                pi = pi_new;
-
-                theta_new = zeros(K, J);
-                theta_new(1:z_dn,:) = theta(1:z_dn,:);
-                theta_new(z_dn+1:K,:) = theta(z_dn+2:K+1,:);
-                theta_new(1,:) = theta_new(1,:) + theta(z_dn+1,:);
-                theta = theta_new;
-
-                K = K - 1;
-
-                N_k_new = zeros(K, 1);
-                N_k_new(1:z_dn-1) = n_k(1:z_dn-1);
-                N_k_new(z_dn:K) = n_k(z_dn+1:K+1);
-                n_k = N_k_new;
-
-                n_kv_new = zeros(K, V);
-                n_kv_new(1:z_dn-1, :) = n_kv(1:z_dn-1, :);
-                n_kv_new(z_dn:K, :) = n_kv(z_dn+1:K+1, :);
-                n_kv = n_kv_new;
-
-                n_jk_new = zeros(K, J);
-                n_jk_new(1:z_dn-1,:) = n_jk(1:z_dn-1,:);
-                n_jk_new(z_dn:K,:) = n_jk(z_dn+1:K+1,:);
-                n_jk = n_jk_new;
-
-                idx = cellfun(@(x) find(x > z_dn), topicMat, 'UniformOutput', false);
-                for i=1:J
-                    topicMat{i}(idx{i}) = topicMat{i}(idx{i}) - 1;
-                end
-
-                p = zeros(1+K+1, 1);
-            end
         end
 
         str = repmat('\b', 1, strlen);
@@ -887,5 +922,12 @@ end
 % A = loggamaprx(50);
 % B = log(gamma(50));
 function y = loggamaprx(x)
-    y = 0.5*(log(2*pi) - log(x)) + x*(log(x + 1/(12*x - 1/(10*x))) - 1);
+    y1 = log(gamma(x));
+    idx = isinf(y1);
+    
+    x2 = x(idx);
+    y2 = 0.5.*(log(2*pi) - log(x2)) + x2.*(log(x2 + 1./(12*x2 - 1./(10*x2))) - 1);
+    
+    y = y1;
+    y(idx) = y2;
 end
