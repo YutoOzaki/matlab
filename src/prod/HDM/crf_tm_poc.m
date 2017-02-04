@@ -39,9 +39,9 @@ function crf_tm_poc(testdata)
         end
     end
     
-    for i=1:0
-        [topicMat, K, n_k, n_kv, n_jk, pi, theta] = directassignment(N, 0, V, w, topicMat, n_j, [], [], [], alpha, beta, gam, 1, ones(N,1), init);
-        %[m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, N, alpha, gam, beta, 3);
+    for i=1:1
+        %[topicMat, K, n_k, n_kv, n_jk, pi, theta] = directassignment(N, 0, V, w, topicMat, n_j, [], [], [], alpha, beta, gam, 1, ones(N,1), init);
+        [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, N, alpha, gam, beta, 3);
         
         [n_jk, n_k_check] = count_jk(topicMat, N, K);
         assert(isequal(n_k, n_k_check), 'n_k count is inconsistent');
@@ -58,16 +58,18 @@ function crf_tm_poc(testdata)
         theta = ltopicrnd(pi, alpha, n_jk, N, K);
         phi = twordrnd(V, K, n_kv, beta);
         
-        %{
+        %%{
         fprintf('-before-\n');
         [K_mean] = mean_k(gam, M);
         fprintf(' K = %d (gam = %3.3f: %3.3f)\n', K, gam, K_mean);
 
         M_mean = mean_m(alpha, n_j);
         fprintf(' M = %d (alpha = %3.3f: %3.3f)\n', M, alpha, M_mean);
-        
+        %}
+        %{
         [gam, alpha] = hyprprmrnd(K, M, gam, alpha, n_j, a_gam, b_gam, a_alpha, b_alpha);
-        
+        %}
+        %{
         fprintf('-after-\n');
         [K_mean] = mean_k(gam, M);
         fprintf(' K = %d (gam = %3.3f: %3.3f)\n', K, gam, K_mean);
@@ -94,13 +96,15 @@ function crf_tm_poc(testdata)
     %% Count items
     diary off
     %K = count_k(topicMat);
-    %[n_jk, n_k] = count_jk(topicMat, N, K);
+    [n_jk, n_k] = count_jk(topicMat, N, K);
     %[n_kv] = count_kv(topicMat, w, K, V);
     
     n_j = cell2mat(cellfun(@(x) length(x), w, 'UniformOutput', false));
+    %{
     topicMat = w;
     init = true;
     [topicMat, K, n_k, n_kv, n_jk, pi, theta] = directassignment(N, 0, V, w, topicMat, n_j, [], [], [], alpha, beta, gam, 1, ones(N,1), init);
+    %}
     init = false;
     
     diary on;
@@ -252,11 +256,7 @@ function printTopics(J, K, theta, phi, vocabulary)
 end
 
 function K_mean = mean_k(gam, M)
-    K_mean = 1;
-    
-    for i=1:M-1
-        K_mean = K_mean + gam/(gam + i);
-    end
+    K_mean = expcrp(gam, M);
 end
 
 function M_mean = mean_m(alpha, n_j)
@@ -264,13 +264,7 @@ function M_mean = mean_m(alpha, n_j)
     J = length(n_j);
     
     for j=1:J
-        buf = 1;
-        
-        for i=1:n_j(j)-1
-            buf = buf + alpha/(alpha + i);
-        end
-        
-        M_mean = M_mean + buf;
+        M_mean = M_mean + expcrp(alpha, n_j(j));
     end
 end
 
@@ -481,7 +475,7 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
                     cnt = cnt + 1;
                 end
 
-                p(cnt + 1) = alpha * sum(m_k./(M + gam) .* (n_kv(:,v) + beta)./(n_k .* betaV)) + gam/(M + gam) / V + p(cnt);
+                p(cnt + 1) = alpha * sum(m_k./(M + gam) .* (n_kv(:,v) + beta)./(n_k + betaV)) + gam/(M + gam) / V + p(cnt);
                 
                 idx = find(p < p(end)*rnd(n));
                 idx = idx(end);
@@ -616,7 +610,7 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
                 end
                 
                 cnt = 1;
-                %logp = p;
+                logp = p;
                 
                 for k=1:K
                     buf...
@@ -624,7 +618,7 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
                         + sum(loggamaprx(n_kv(k,:) + n_jtv{j}(t,:) + beta)) - sum(loggamaprx(n_kv(k,:) + beta));
                     
                     p(cnt+1) = exp(buf) + p(cnt);
-                    %logp(cnt+1) = buf;
+                    logp(cnt+1) = buf;
                     cnt = cnt + 1;
                 end
                 
@@ -632,21 +626,27 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
                     = log_gam + loggam_betaV - loggamaprx(n_jt{j}(t) + betaV)...
                     + sum(log(gamma(n_jtv{j}(t,:) + beta))) - Vloggam_beta;
                 p(cnt+1) = exp(buf) + p(cnt);
-                %logp(cnt+1) = buf;
+                logp(cnt+1) = buf;
                 
+                %%{
+                logp = logp - max(logp(2:end-1));
+                p2 = exp(logp(2:end-1));
+                p2 = p2./sum(p2);
+                idx = mnrnd(1, p2);
+                idx = find(idx == 1);
+                %}
                 %{
                 e10order = mean(log10(abs(logp(2:end))));
-                p2 = exp(logp./(10^e10order));
+                p2 = exp(logp + 10^e10order);
                 p2(1) = 0;
                 for k=1:K+1
                     p2(k+1) = p2(k) + p2(k+1);
                 end
-                p2 = p2./p2(end);
                 
                 idx = find(p2 < p2(end)*rnd(t));
                 %}
-                idx = find(p < p(end)*rnd(t));
-                idx = idx(end);
+                %idx = find(p < p(end)*rnd(t));
+                %idx = idx(end);
                 
                 if idx <= K
                     k = idx;
@@ -936,6 +936,10 @@ function [n_kv] = count_kv(topicMat, w, K, V)
 
         fprintf('...\n');
     end
+end
+
+function N = expcrp(alpha, n)
+    N = alpha * (psi(alpha + n) - psi(alpha));
 end
 
 %% approximation of log-gamma function
