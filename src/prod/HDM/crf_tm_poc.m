@@ -41,7 +41,7 @@ function crf_tm_poc(testdata)
     
     for i=1:1
         %[topicMat, K, n_k, n_kv, n_jk, pi, theta] = directassignment(N, 0, V, w, topicMat, n_j, [], [], [], alpha, beta, gam, 1, ones(N,1), init);
-        [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, N, alpha, gam, beta, 3);
+        [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, N, alpha, gam, beta, 20);
         
         [n_jk, n_k_check] = count_jk(topicMat, N, K);
         assert(isequal(n_k, n_k_check), 'n_k count is inconsistent');
@@ -392,6 +392,8 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
         
     betaV = beta*V;
     log_gam = log(gam);
+    log_alpha = log(alpha);
+    log_V = log(V);
     loggam_betaV = loggamaprx(betaV);
     Vloggam_beta = V*log(gamma((beta)));
     
@@ -408,10 +410,8 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
         
         for j=1:J
             T = length(n_jt{j});
-            p = zeros(1 + T + 1, 1);
+            logp = zeros(T + 1, 1);
             
-            rnd = rand(n_j(j), 1);
-
             for n=1:n_j(j)
                 v = w{j}(n);
                 
@@ -463,22 +463,23 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
                             [K, n_k, n_kv, m_k, topicMat, phi] = deleteTopics(k, K, V, J, n_k, n_kv, m_k, topicMat, phi);
                         end
                         
-                        p = zeros(1 + T + 1, 1);
+                        logp = zeros(T + 1, 1);
                     end
                 end
                 
-                cnt = 1;
-
                 for t=1:T
                     k = phi{j}(t);
-                    p(cnt + 1) = n_jt{j}(t) * (n_kv(k,v) + beta) / (n_k(k) + betaV) + p(cnt);
-                    cnt = cnt + 1;
+                    logp_buf = log(n_jt{j}(t)) + log((n_kv(k,v) + beta)) - log((n_k(k) + betaV));
+                    
+                    logp(t) = logp_buf;
                 end
 
-                p(cnt + 1) = alpha * sum(m_k./(M + gam) .* (n_kv(:,v) + beta)./(n_k + betaV)) + gam/(M + gam) / V + p(cnt);
+                p_buf = sum(m_k ./ (M + gam) .* (n_kv(:,v) + beta) ./ (n_k + betaV))...
+                    + gam / (M + gam) * (1/V);
+                logp_buf = log_alpha + log(p_buf);
+                logp(T+1) = logp_buf;
                 
-                idx = find(p < p(end)*rnd(n));
-                idx = idx(end);
+                idx = logpmnrnd(logp);
                 
                 if idx <= T
                     t = idx;
@@ -489,19 +490,16 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
                     n_jt{j}(t) = n_jt{j}(t) + 1;
                     n_jtv{j}(t,v) = n_jtv{j}(t,v) + 1;
                 elseif idx == (T + 1)
-                    p = zeros(1 + K + 1, 1);
-                    
-                    cnt = 1;
+                    logp = zeros(K + 1, 1);
                     
                     for k=1:K
-                        p(cnt + 1) = m_k(k) * (n_kv(k,v) + beta) / (n_k(k) + betaV) + p(cnt);
-                        cnt = cnt + 1;
+                        logp_buf = log(m_k(k)) + log(n_kv(k,v) + beta) - log(n_k(k) + betaV);
+                        logp(k) = logp_buf;
                     end
 
-                    p(cnt + 1) = gam / V + p(cnt);
+                    logp(K + 1) = log_gam - log_V;
                     
-                    idx = find(p < p(end)*rand);
-                    idx = idx(end);
+                    idx = logpmnrnd(logp);
                     
                     if idx <= K
                         tspawned = tspawned + 1;
@@ -516,7 +514,7 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
                         n_jt{j} = [n_jt{j}; 1];
 
                         T = length(n_jt{j});
-                        p = zeros(1 + T + 1, 1);
+                        logp = zeros(T + 1, 1);
                         phi{j} = [phi{j}; k];
 
                         t = T;
@@ -539,7 +537,7 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
                         n_jt{j} = [n_jt{j}; 1];
 
                         T = length(n_jt{j});
-                        p = zeros(1 + T + 1, 1);
+                        logp = zeros(T + 1, 1);
                         phi{j} = [phi{j}; k];
 
                         t = T;
@@ -588,9 +586,7 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
         
         for j=1:J
             T = length(n_jt{j});
-            p = zeros(1 + K + 1, 1);
-            
-            rnd = rand(T, 1);
+            logp = zeros(K + 1, 1);
             
             assert(isequal(n_jt{j}, sum(n_jtv{j},2)), 'CRF: n_jt and n_jtv is incosistent');
             
@@ -606,47 +602,23 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
                     kremoved = kremoved + 1;
                     
                     [K, n_k, n_kv, m_k, topicMat, phi] = deleteTopics(k, K, V, J, n_k, n_kv, m_k, topicMat, phi);
-                    p = zeros(1 + K + 1, 1);
+                    logp = zeros(K + 1, 1);
                 end
                 
-                cnt = 1;
-                logp = p;
-                
                 for k=1:K
-                    buf...
+                    logp_buf...
                         = log(m_k(k)) + loggamaprx(n_k(k) + betaV) - loggamaprx(n_k(k) + n_jt{j}(t) + betaV)...
                         + sum(loggamaprx(n_kv(k,:) + n_jtv{j}(t,:) + beta)) - sum(loggamaprx(n_kv(k,:) + beta));
                     
-                    p(cnt+1) = exp(buf) + p(cnt);
-                    logp(cnt+1) = buf;
-                    cnt = cnt + 1;
+                    logp(k) = logp_buf;
                 end
                 
-                buf...
+                logp_buf...
                     = log_gam + loggam_betaV - loggamaprx(n_jt{j}(t) + betaV)...
                     + sum(log(gamma(n_jtv{j}(t,:) + beta))) - Vloggam_beta;
-                p(cnt+1) = exp(buf) + p(cnt);
-                logp(cnt+1) = buf;
+                logp(K+1) = logp_buf;
                 
-                %%{
-                logp = logp - max(logp(2:end-1));
-                p2 = exp(logp(2:end-1));
-                p2 = p2./sum(p2);
-                idx = mnrnd(1, p2);
-                idx = find(idx == 1);
-                %}
-                %{
-                e10order = mean(log10(abs(logp(2:end))));
-                p2 = exp(logp + 10^e10order);
-                p2(1) = 0;
-                for k=1:K+1
-                    p2(k+1) = p2(k) + p2(k+1);
-                end
-                
-                idx = find(p2 < p2(end)*rnd(t));
-                %}
-                %idx = find(p < p(end)*rnd(t));
-                %idx = idx(end);
+                idx = logpmnrnd(logp);
                 
                 if idx <= K
                     k = idx;
@@ -667,7 +639,7 @@ function [m_k, n_k, n_kv, n_j, K, M, topicMat] = crf(w, V, J, alpha, gam, beta, 
                     n_k = [n_k; n_jt{j}(t)];
                     n_kv = [n_kv; n_jtv{j}(t,:)];
                     
-                    p = zeros(1 + K + 1, 1);
+                    logp = zeros(K + 1, 1);
                 else
                     assert(false, 'CRF: indexing is not working (topic)');
                 end
@@ -826,6 +798,13 @@ function [topicMat, K, n_k, n_kv, n_jk, pi, theta] = directassignment(J, K, V, w
         str = repmat('\b', 1, strlen);
         fprintf(str);
     end
+end
+
+function idx = logpmnrnd(logp)
+    p = exp(logp - max(logp));
+    p = p./sum(p);
+    idx = mnrnd(1, p);
+    idx = find(idx == 1);
 end
 
 %% deletion of topics
