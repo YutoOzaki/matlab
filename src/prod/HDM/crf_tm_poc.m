@@ -25,15 +25,15 @@ function crf_tm_poc(testdata)
     repository = datarepo(w, N, V, vocabulary);
     
     %% Hyperparameters
-    beta    = 0.5;    % parameter of dirichlet distribution (symmetric)
+    beta    = 0.1;    % parameter of dirichlet distribution (symmetric)
     
     a_alpha = 1; % Shape parameter of gamma prior for alpha
     b_alpha = 1; % Scale parameter of gamma prior for alpha
     alpha   = 1;
 
-    a_gam   = 1; % Shape parameter of gamma prior for gamma
-    b_gam   = 0.1; % Scale parameter of gamma prior for gamma
-    gam     = 10;
+    a_gam   = 2; % Shape parameter of gamma prior for gamma
+    b_gam   = 4; % Scale parameter of gamma prior for gamma
+    gam     = 0.5;
     
     %% Setup test condition
     maxitr = 100;
@@ -41,9 +41,11 @@ function crf_tm_poc(testdata)
     perplexity = zeros(maxitr, 1);
     
     %% CRF initialization
+    %%{
     repository = crf(repository, alpha, gam, beta, true, 1);
     pi = dirichletrnd([gam; repository.m_k]);
     theta = ltopicrnd(pi, alpha, repository.n_jk, repository.J, repository.K);
+    %}
     
     %% CRF inference
     vocabulary = repository.vocabulary;
@@ -51,7 +53,7 @@ function crf_tm_poc(testdata)
     V          = repository.V;
     J          = repository.J;
     n_j        = repository.n_j;
-    for i=1:0
+    for i=1:20
         repository = crf(repository, alpha, gam, beta, false, 20);
         
         %{
@@ -95,7 +97,7 @@ function crf_tm_poc(testdata)
         M_mean = mean_m(alpha, n_j);
         fprintf(' E(M) = %3.3f (alpha = %3.3f, M = %d)\n', M_mean, alpha, M);
 
-        [gam, alpha] = hyprprmrnd(K, M, gam, alpha, n_j, a_gam, b_gam, a_alpha, b_alpha, 50);
+        [gam, alpha] = hyprprmrnd(K, M, gam, alpha, n_j, a_gam, b_gam, a_alpha, b_alpha, 0);
 
         fprintf('-after-\n');
         K_mean = mean_k(gam, M);
@@ -105,10 +107,12 @@ function crf_tm_poc(testdata)
         fprintf(' E(M) = %3.3f (alpha = %3.3f, M = %d)\n', M_mean, alpha, M);
     end
     
-    %% Direct assignment inference initialization
-    %init = true;
-    %[topicMat, K, n_k, n_kv, n_jk, pi, theta] = directassignment(N, 0, V, w, topicMat, n_j, [], [], [], alpha, beta, gam, 1, ones(N,1), init);
-    init = false;
+   %% Direct assignment inference initialization
+   %{
+   init = true;
+   [repository, pi, theta] = directassignment(repository, alpha, beta, gam, 1, ones(J,1), init);
+   %}
+   init = false;
     
    %% Direct assignment scheme inference
    diary on;
@@ -245,40 +249,6 @@ function K_mean = mean_k(gam, M)
     K_mean = expcrp(gam, M);
 end
 
-function M_mean = mean_m(alpha, n_j)
-    M_mean = 0;
-    J = length(n_j);
-    
-    for j=1:J
-        M_mean = M_mean + expcrp(alpha, n_j(j));
-    end
-end
-
-function [gam, alpha] = hyprprmrnd(K, M, gam, alpha, n_j, a_gam, b_gam, a_alpha, b_alpha, maxitr)
-    if ~exist('maxitr','var')
-        maxitr = 50;
-    end
-
-    J = length(n_j);
-    I = ones(J,1);
-    
-    for i=1:maxitr
-        w_j = betarnd((gam+1), M);
-        B = b_gam - log(w_j);
-        s_j = binornd(1, M/(gam + M));
-        A = a_gam + K - s_j;
-
-        gam = gamrnd(A, 1/B);
-
-        w_j = betarnd(repmat(alpha+1,J,1), n_j);
-        B = b_alpha - sum(log(w_j));
-        s_j = binornd(I, n_j./(alpha + n_j));
-        A = a_alpha + M - sum(s_j);
-
-        alpha = gamrnd(A, 1/B);
-    end
-end
-
 function beta = fixeditr(n_kv, n_k, beta, V)
     K = length(n_k);
     KV = K*V;
@@ -295,11 +265,6 @@ function beta = fixeditr(n_kv, n_k, beta, V)
         
         beta = beta_new;
     end
-end
-
-function x = dirichletrnd(alpha)
-    x = gamrnd(alpha,1);
-    x = x./sum(x);
 end
 
 function [K, p] = crp(N, alpha)
@@ -326,376 +291,6 @@ function [K, p] = crp(N, alpha)
     
     p = count_n./(N+alpha);
     p = p./sum(p);
-end
-
-function drawdist(pi, theta, phi, fignum)
-    figure(fignum); 
-    subplot(1,12,1); imagesc(pi); caxis([0 1]); set(gca, 'XTick', []); title('global-level');
-    subplot(1,12,3:12); imagesc(theta); caxis([0 1]); title('local-level');
-    
-    figure(fignum+1); imagesc(phi'); caxis([0 1]); title('topic-word distribution');
-    
-    drawnow();
-end
-
-function [perp, L] = wordperp(theta, phi, w, J, K, n_j)
-    L = zeros(J, 1);
-
-    for j=1:J
-        for n=1:n_j(j)
-            L_buf = 0;
-            for k=1:K
-                L_buf = L_buf + theta(k+1,j) * phi(w{j}(n),k);
-            end
-            L(j) = L(j) + log(L_buf);
-        end
-    end
-
-    perp = exp(-sum(L)/sum(n_j));
-end
-
-function repository = crf(repository, alpha, gam, beta, init, maxitr)
-    if ~exist('maxitr','var')
-        maxitr = 100;
-    end
-    
-    %% load data
-    w = repository.w;
-    topicMat = repository.topicMat;
-    tableMat = repository.tableMat;
-    phi = repository.phi;
-    
-    V = repository.V;
-    J = repository.J;
-    K = repository.K;
-    M = repository.M;
-    
-    n_j   = repository.n_j;
-    n_k   = repository.n_k;
-    n_kv  = repository.n_kv;
-    n_jt  = repository.n_jt;
-    n_jtv = repository.n_jtv;
-    
-    m_k   = repository.m_k;
-        
-    %% Calculate constants
-    betaV = beta*V;
-    loggam = log(gam);
-    logalpha = log(alpha);
-    logV = log(V);
-    loggam_betaV = loggamfun(betaV);
-    Vloggam_beta = V*log(gamma((beta)));
-    
-    %% Main loop
-    for itr=1:maxitr
-        fprintf('iteration: %d\n', itr);
-        
-       %% Sampling tables
-        M_ini = M;
-        K_ini = K;
-        tspawned = 0;
-        tremoved = 0;
-        kspawned = 0;
-        kremoved = 0;
-        
-        for j=1:J
-            str = sprintf(' (%d/%d)', j, J);
-            strlen = length(str);
-            fprintf(str);
-            
-            T = length(n_jt{j});
-            logp = zeros(T + 1, 1);
-            
-            for n=1:n_j(j)
-                v = w{j}(n);
-                
-                if ~init
-                    t = tableMat{j}(n);
-                    k = topicMat{j}(n);
-                    
-                    assert(phi{j}(t) == topicMat{j}(n), 'CRF: topic assignment is inconsistent');
-                    assert(isequal(n_jt{j}, sum(n_jtv{j},2)), 'CRF: n_jt and n_jtv is incosistent');
-                    assert(n_jtv{j}(t,v) > 0, 'CRF: table assignment is inconsistent');
-                    
-                    n_jt{j}(t) = n_jt{j}(t) - 1;
-                    n_kv(k,v) = n_kv(k,v) - 1;
-                    n_k(k) = n_k(k) - 1;
-                    n_jtv{j}(t,v) = n_jtv{j}(t,v) - 1;
-                    
-                    if n_jt{j}(t) == 0
-                        tremoved = tremoved + 1;
-                        
-                        M = M - 1;
-                        
-                        T = length(n_jt{j}) - 1;
-                        
-                        n_jt_new = zeros(T, 1);
-                        n_jt_new(1:t-1) = n_jt{j}(1:t-1);
-                        n_jt_new(t:T) = n_jt{j}(t+1:T+1);
-                        n_jt{j} = n_jt_new;
-                        
-                        phi_new = zeros(T, 1);
-                        phi_new(1:t-1) = phi{j}(1:t-1);
-                        phi_new(t:T) = phi{j}(t+1:T+1);
-                        phi{j} = phi_new;
-                        
-                        n_jtv_new = zeros(T, V);
-                        n_jtv_new(1:t-1,:) = n_jtv{j}(1:t-1,:);
-                        n_jtv_new(t:T,:) = n_jtv{j}(t+1:T+1,:);
-                        n_jtv{j} = n_jtv_new;
-                        
-                        m_k(k) = m_k(k) - 1;
-                        
-                        idx_t = find(tableMat{j} > t);
-                        tableMat{j}(idx_t) = tableMat{j}(idx_t) - 1;
-                        
-                        if n_k(k) == 0
-                            assert(m_k(k) == 0, 'CRF: empty n_k and m_k is inconsistent (table)');
-                            
-                            kremoved = kremoved + 1;
-                            K = K - 1;
-                            
-                            [n_k, n_kv, m_k, topicMat, phi] = deleteTopics(k, K, V, J, n_k, n_kv, m_k, topicMat, phi);
-                        end
-                        
-                        logp = zeros(T + 1, 1);
-                    end
-                end
-                
-                for t=1:T
-                    k = phi{j}(t);
-                    logp_buf = log(n_jt{j}(t)) + log((n_kv(k,v) + beta)) - log((n_k(k) + betaV));
-                    
-                    logp(t) = logp_buf;
-                end
-
-                p_buf = sum(m_k ./ (M + gam) .* (n_kv(:,v) + beta) ./ (n_k + betaV))...
-                    + gam / (M + gam) * (1/V);
-                logp_buf = logalpha + log(p_buf);
-                logp(T+1) = logp_buf;
-                
-                idx = logpmnrnd(logp);
-                
-                if idx <= T
-                    t = idx;
-                    k = phi{j}(t);
-                    
-                    n_kv(k,v) = n_kv(k,v) + 1;
-                    n_k(k) = n_k(k) + 1;
-                    n_jt{j}(t) = n_jt{j}(t) + 1;
-                    n_jtv{j}(t,v) = n_jtv{j}(t,v) + 1;
-                elseif idx == (T + 1)
-                    logp = zeros(K + 1, 1);
-                    
-                    for k=1:K
-                        logp_buf = log(m_k(k)) + log(n_kv(k,v) + beta) - log(n_k(k) + betaV);
-                        logp(k) = logp_buf;
-                    end
-
-                    logp(K + 1) = loggam - logV;
-                    
-                    idx = logpmnrnd(logp);
-                    
-                    if idx <= K
-                        tspawned = tspawned + 1;
-                    
-                        M = M + 1;
-
-                        k = idx;
-
-                        n_kv(k,v) = n_kv(k,v) + 1;
-                        n_k(k) = n_k(k) + 1;
-                        m_k(k) = m_k(k) + 1;
-                        n_jt{j} = [n_jt{j}; 1];
-
-                        T = length(n_jt{j});
-                        logp = zeros(T + 1, 1);
-                        phi{j} = [phi{j}; k];
-
-                        t = T;
-
-                        n_jtv{j} = [n_jtv{j}; zeros(1,V)];
-                        n_jtv{j}(t,v) = 1;
-                    elseif idx == (K + 1)
-                        tspawned = tspawned + 1;
-                        kspawned = kspawned + 1;
-
-                        M = M + 1;
-                        K = K + 1;
-
-                        k = K;
-
-                        n_kv = [n_kv; zeros(1,V)];
-                        n_kv(k,v) = 1;
-                        n_k = [n_k; 1];
-                        m_k = [m_k; 1];
-                        n_jt{j} = [n_jt{j}; 1];
-
-                        T = length(n_jt{j});
-                        logp = zeros(T + 1, 1);
-                        phi{j} = [phi{j}; k];
-
-                        t = T;
-
-                        n_jtv{j} = [n_jtv{j}; zeros(1,V)];
-                        n_jtv{j}(t,v) = 1;
-                    else
-                        assert(false, 'CRF: indexing is not working (new table)');
-                    end
-                else
-                    assert(false, 'CRF: indexing is not working (existing table)');
-                end
-                
-                topicMat{j}(n) = k;
-                tableMat{j}(n) = t;
-            end
-            
-            assert(K == length(m_k) && K == length(n_k), 'CRF: K and length is inconsistent');
-            assert(isequal(n_k, sum(n_kv,2)), 'CRF: n_k and n_kv is inconsistent');
-            assert(M == sum(m_k) && M == sum(cell2mat(cellfun(@(x) length(x), n_jt, 'UniformOutput', false)))...
-                && M == sum(cell2mat(cellfun(@(x) length(x), phi, 'UniformOutput', false)))...
-                ,'CRF: M and sum is inconsistent');
-            
-            str = repmat('\b', 1, strlen);
-            fprintf(str);
-        end
-        
-        assert(sum(n_j) == sum(n_k) && sum(n_j) == sum(cell2mat(cellfun(@(x) sum(x), n_jt, 'UniformOutput', false)))...
-             ,'CRF: n_j, n_k and n_jt is incosistent');
-        
-        figure(1);
-        subplot(211); stem(m_k, 'Marker', 'None'); title('m_k');
-        subplot(212); stem(n_k, 'Marker', 'None'); title('n_k');
-        
-        figure(2);
-        imagesc(n_kv); caxis([0 max(max(n_kv))]); set(gca, 'XTick', []); title('n_k_v');
-        
-        drawnow();
-        
-        assert(M == (M_ini + tspawned - tremoved), 'add/remove count of M is inoconsistent');
-        assert(K == (K_ini + kspawned - kremoved), 'add/remove count of K is inoconsistent');
-        fprintf('table_num_update: %d = %d + %d - %d\n', M, M_ini, tspawned, tremoved);
-        fprintf('topic_num_update: %d = %d + %d - %d\n', K, K_ini, kspawned, kremoved);
-        
-        init = false;
-        
-       %% Sampling topics
-        K_ini = K;
-        kspawned = 0;
-        kremoved = 0;
-        
-        for j=1:J
-            str = sprintf(' (%d/%d)', j, J);
-            strlen = length(str);
-            fprintf(str);
-            
-            T = length(n_jt{j});
-            logp = zeros(K + 1, 1);
-            
-            assert(isequal(n_jt{j}, sum(n_jtv{j},2)), 'CRF: n_jt and n_jtv is incosistent');
-            
-            for t=1:T    
-                % remove target component
-                k = phi{j}(t);
-                m_k(k) = m_k(k) - 1;
-                n_k(k) = n_k(k) - n_jt{j}(t);
-                n_kv(k,:) = n_kv(k,:) - n_jtv{j}(t,:);
-                
-                if m_k(k) == 0
-                    assert(n_k(k) == 0, 'CRF: empty n_k and m_k is inconsistent (topic)');
-                    kremoved = kremoved + 1;
-                    K = K -1;
-                    
-                    [n_k, n_kv, m_k, topicMat, phi] = deleteTopics(k, K, V, J, n_k, n_kv, m_k, topicMat, phi);
-                    logp = zeros(K + 1, 1);
-                end
-                
-                for k=1:K
-                    logp_buf...
-                        = log(m_k(k)) + loggamfun(n_k(k) + betaV) - loggamfun(n_k(k) + n_jt{j}(t) + betaV)...
-                        + sum(loggamfun(n_kv(k,:) + n_jtv{j}(t,:) + beta)) - sum(loggamfun(n_kv(k,:) + beta));
-                    
-                    logp(k) = logp_buf;
-                end
-                
-                logp_buf...
-                    = loggam + loggam_betaV - loggamfun(n_jt{j}(t) + betaV)...
-                    + sum(loggamfun(n_jtv{j}(t,:) + beta)) - Vloggam_beta;
-                logp(K+1) = logp_buf;
-                
-                idx = logpmnrnd(logp);
-                
-                if idx <= K
-                    k = idx;
-                    
-                    phi{j}(t) = k;
-                    m_k(k) = m_k(k) + 1;
-                    n_k(k) = n_k(k) + n_jt{j}(t);
-                    n_kv(k,:) = n_kv(k,:) + n_jtv{j}(t,:);
-                elseif idx == (K+1)
-                    kspawned = kspawned + 1;
-                    
-                    K = K + 1; 
-                    
-                    k = K;
-                    
-                    phi{j}(t) = k;
-                    m_k = [m_k; 1];
-                    n_k = [n_k; n_jt{j}(t)];
-                    n_kv = [n_kv; n_jtv{j}(t,:)];
-                    
-                    logp = zeros(K + 1, 1);
-                else
-                    assert(false, 'CRF: indexing is not working (topic)');
-                end
-                
-                t_idx = tableMat{j} == t;
-                topicMat{j}(t_idx) = k;
-            end
-            
-            assert(K == length(m_k) && K == length(n_k), 'CRF: K and length is inconsistent');
-            assert(isequal(n_k, sum(n_kv,2)), 'CRF: n_k and n_kv is inconsistent');
-            assert(M == sum(m_k) && M == sum(cell2mat(cellfun(@(x) length(x), n_jt, 'UniformOutput', false)))...
-                && M == sum(cell2mat(cellfun(@(x) length(x), phi, 'UniformOutput', false)))...
-                ,'CRF: M and sum is inconsistent');
-            
-            str = repmat('\b', 1, strlen);
-            fprintf(str);
-        end
-        
-        assert(sum(n_j) == sum(n_k) && sum(n_j) == sum(cell2mat(cellfun(@(x) sum(x), n_jt, 'UniformOutput', false)))...
-             ,'CRF: n_j, n_k and n_jt is incosistent');
-        assert(isequal(n_jt{j}, sum(n_jtv{j},2)), 'CRF: n_jt and n_jtv is incosistent');
-        
-        figure(1);
-        subplot(211); stem(m_k, 'Marker', 'None'); title('m_k');
-        subplot(212); stem(n_k, 'Marker', 'None'); title('n_k');
-        
-        figure(2);
-        imagesc(n_kv); caxis([0 max(max(n_kv))]); set(gca, 'XTick', []); title('n_k_v');
-        
-        drawnow();
-        
-        assert(K == (K_ini + kspawned - kremoved), 'add/remove count of K is inoconsistent');
-        fprintf('topic_num_update: %d = %d + %d - %d\n\n', K, K_ini, kspawned, kremoved);
-    end
-    
-    %% Set to repository (return: topicMat, tableMat, K, M, n_k, n_kv, m_k, n_j)
-    repository.topicMat = topicMat;
-    repository.tableMat = tableMat;
-    repository.phi = phi;
-    
-    repository.K = K;
-    repository.M = M;
-    
-    repository.n_k   = n_k;
-    repository.n_kv  = n_kv;
-    repository.n_jt  = n_jt;
-    repository.n_jtv = n_jtv;
-    
-    repository.m_k   = m_k;
-    
-    repository.n_jk  = repository.count_jk();
 end
 
 function [repository, pi, theta] = directassignment(repository, alpha, beta, gam, pi, theta, init)
@@ -854,59 +449,6 @@ function [repository, pi, theta] = directassignment(repository, alpha, beta, gam
     repository.n_jk     = n_jk;
 end
 
-function idx = logpmnrnd(logp)
-    p = exp(logp - max(logp));
-    p = p./sum(p);
-    idx = mnrnd(1, p);
-    idx = find(idx == 1);
-end
-
-%% deletion of topics
-function [n_k, n_kv, m_k, topicMat, phi] = deleteTopics(k, K, V, J, n_k, n_kv, m_k, topicMat, phi)
-    n_k_new = zeros(K, 1);
-    n_k_new(1:k-1) = n_k(1:k-1);
-    n_k_new(k:K) = n_k(k+1:K+1);
-    n_k = n_k_new;
-
-    n_kv_new = zeros(K, V);
-    n_kv_new(1:k-1,:) = n_kv(1:k-1,:);
-    n_kv_new(k:K,:) = n_kv(k+1:K+1,:);
-    n_kv = n_kv_new;
-
-    m_k_new = zeros(K, 1);
-    m_k_new(1:k-1) = m_k(1:k-1);
-    m_k_new(k:K) = m_k(k+1:K+1);
-    m_k = m_k_new;
-
-    idx_k = cellfun(@(x) find(x > k), topicMat, 'UniformOutput', false);
-    idx_p = cellfun(@(x) find(x > k), phi, 'UniformOutput', false);
-    for i=1:J
-        topicMat{i}(idx_k{i}) = topicMat{i}(idx_k{i}) - 1;
-        phi{i}(idx_p{i}) = phi{i}(idx_p{i}) - 1;
-    end
-end
-
-%% topic-word distribution
-function phi = twordrnd(V, K, n_kv, beta)
-    phi = zeros(V, K);
-    
-    for k=1:K
-        phi(:,k) = dirichletrnd(n_kv(k, :) + beta);
-    end
-end
-
-%% document-topic distribution
-function theta = ltopicrnd(pi, alpha, n_jk, J, K)
-    theta = zeros(K+1, J);
-
-    for j=1:J
-        alpha_vec = pi.*alpha;
-        alpha_vec(2:K+1,1) = alpha_vec(2:K+1,1) + n_jk(:,j);
-        
-        theta(:,j) = dirichletrnd(alpha_vec);
-    end
-end
-
 function K = count_k(topicMat)
     J = length(topicMat);
 
@@ -951,23 +493,4 @@ function [n_kv] = count_kv(topicMat, w, K, V)
 
         fprintf('...\n');
     end
-end
-
-function N = expcrp(alpha, n)
-    N = alpha * (psi(alpha + n) - psi(alpha));
-end
-
-%% approximation of log-gamma function
-% For example, compare result of the calculation below.
-% A = loggamaprx(50);
-% B = log(gamma(50));
-function y = loggamfun(x)
-    y1 = log(gamma(x));
-    idx = isinf(y1);
-    
-    x2 = x(idx);
-    y2 = 0.5.*(log(2*pi) - log(x2)) + x2.*(log(x2 + 1./(12*x2 - 1./(10*x2))) - 1);
-    
-    y = y1;
-    y(idx) = y2;
 end

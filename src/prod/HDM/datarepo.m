@@ -50,14 +50,10 @@ classdef datarepo
         
         %% count n_jk
         function n_jk = count_jk(obj)
-            topicMat = obj.topicMat;
-            J = obj.J;
-            K = obj.K;
-            
-            n_jk = zeros(K, J);
+            n_jk = zeros(obj.K, obj.J);
 
-            for k=1:K
-                n_jk(k,:) = cell2mat(cellfun(@(x) length(find(x==k)), topicMat, 'UniformOutput', false))';
+            for k=1:obj.K
+                n_jk(k,:) = cell2mat(cellfun(@(x) length(find(x==k)), obj.topicMat, 'UniformOutput', false))';
             end
             
             assert(isequal(sum(n_jk, 1), obj.n_j'), 'n_jk and n_j is inconsistent');
