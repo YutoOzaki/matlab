@@ -1,17 +1,4 @@
-function hdp_test(testdata, logfilename, gamma, a_gam, b_gam, alpha, a_alpha, b_alpha, beta, maxitr, maxitr_hp)
-    %% Setup logging
-    if strcmp(computer, 'PCWIN64')
-        slash = '\';
-    elseif strcmp(computer, 'MACI64')
-        slash = '/';
-    end
-    
-    homedir = userpath;
-    homedir = homedir(1:(length(homedir) - 1));
-    logging = strcat(homedir,slash,'logs',slash,'HDM',slash,logfilename);
-    diary(logging);
-    fprintf('\n*** Experiment %5.5f ***\n', now);
-    
+function hdp_test(testdata, gamma, a_gam, b_gam, alpha, a_alpha, b_alpha, beta, steps, steps_hp, steps_fpi, maxitr, scheme)
     %% Load dataset
     load(testdata);
     assert(exist('N', 'var') && exist('V', 'var') && exist('vocabulary', 'var') && exist('w', 'var'),...
@@ -25,7 +12,7 @@ function hdp_test(testdata, logfilename, gamma, a_gam, b_gam, alpha, a_alpha, b_
     
     repository = datarepo(w, N, V, vocabulary);
     
-    %% Setup test condition
+   %% Setup test condition
     L = zeros(N, maxitr);
     perplexity = zeros(maxitr, 1);
     bufperp = Inf;
@@ -39,7 +26,13 @@ function hdp_test(testdata, logfilename, gamma, a_gam, b_gam, alpha, a_alpha, b_
     
     %% CRF inference
     for i=1:maxitr
-        repository = crf(repository, alpha, gamma, beta, false, 20);
+        if strcmp('direct', scheme)
+            repository = directassignment(repository, alpha, gamma, beta, pi, false, steps);
+        elseif strcmp('crf', scheme)
+            repository = crf(repository, alpha, gamma, beta, false, steps);
+        elseif strcmp('prs', scheme)
+            repository = prs(repository, alpha, gamma, beta, pi, theta, false, steps);
+        end
         
         %{
         [n_jk, n_k_check] = count_jk(topicMat, N, K);
@@ -88,19 +81,21 @@ function hdp_test(testdata, logfilename, gamma, a_gam, b_gam, alpha, a_alpha, b_
         
         fprintf('-before-\n');
         K_mean =expcrp(gamma, M);
-        fprintf(' E(K) = %3.3f (gam = %3.3f, K = %d)\n', K_mean, gamma, K);
-
         M_mean = mean_m(alpha, n_j);
+        fprintf(' E(K) = %3.3f (gam = %3.3f, K = %d)\n', K_mean, gamma, K);
         fprintf(' E(M) = %3.3f (alpha = %3.3f, M = %d)\n', M_mean, alpha, M);
+        fprintf(' beta = %3.3f\n', beta);
 
-        [gamma, alpha] = hyprprmrnd(K, M, gamma, alpha, n_j, a_gam, b_gam, a_alpha, b_alpha, maxitr_hp);
+        [gamma, alpha] = hyprprmrnd(K, M, gamma, alpha, n_j, a_gam, b_gam, a_alpha, b_alpha, steps_hp);
+        n_k  = repository.n_k;
+        beta = fixeditr(n_kv, n_k, beta, V, steps_fpi);
 
         fprintf('-after-\n');
         K_mean = expcrp(gamma, M);
-        fprintf(' E(K) = %3.3f (gam = %3.3f, K = %d)\n', K_mean, gamma, K);
-
         M_mean = mean_m(alpha, n_j);
+        fprintf(' E(K) = %3.3f (gam = %3.3f, K = %d)\n', K_mean, gamma, K);
         fprintf(' E(M) = %3.3f (alpha = %3.3f, M = %d)\n', M_mean, alpha, M);
+        fprintf(' beta = %3.3f\n', beta);
     end
     diary on
 

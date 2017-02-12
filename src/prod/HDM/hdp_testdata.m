@@ -1,5 +1,25 @@
-function hdp_testdata(K, J, V, gamma, alpha, beta, n_j_min, n_j_max, converged, INCREMENTAL)
+function hdp_testdata(K, J, V, eta, alpha, beta, n_j_min, n_j_max, converged, INCREMENTAL)
+    %% constant
     margin = n_j_max - n_j_min;
+    
+    %% nested Chinese restaurant porcess
+    tree = zeros(length(eta)+1, 1);
+    tree(1,1) = J;
+    
+    for l=1:length(eta)
+        N = length(find(tree(l,:) ~= 0));
+        counter = 1;
+        
+        for n=1:N
+            [~, count_n] = crp(eta(l), tree(l,n));
+            count_n = count_n(1:end-1);
+            
+            for k=1:length(count_n)
+                tree(l+1,counter) = count_n(k);
+                counter = counter + 1;
+            end
+        end
+    end
     
     %% generate base measure
     pi = sbp(gamma, K);
