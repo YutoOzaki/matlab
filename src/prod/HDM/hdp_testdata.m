@@ -1,183 +1,79 @@
-function hdp_testdata(K, J, V, eta, alpha, beta, n_j_min, n_j_max, converged, INCREMENTAL)
-    %% constant
-    margin = n_j_max - n_j_min;
+% For testing
+% K = 10; J = 30; V = 100; eta = [1.5 1.2]; alpha = [3 2.5 4 4]; beta = 0.3; n_j_min = 80; n_j_max = 120;
+function hdp_testdata(K, J, V, eta, alpha, beta, n_j_min, n_j_max)
+    z = zeros(J, 1);
     
-    %% nested Chinese restaurant porcess
-    tree = zeros(length(eta)+1, 1);
-    tree(1,1) = J;
+    z = ncrp(eta, z);
+    pi = sbptree(alpha, K, z);
     
-    for l=1:length(eta)
-        N = length(find(tree(l,:) ~= 0));
-        counter = 1;
-        
-        for n=1:N
-            [~, count_n] = crp(eta(l), tree(l,n));
-            count_n = count_n(1:end-1);
-            
-            for k=1:length(count_n)
-                tree(l+1,counter) = count_n(k);
-                counter = counter + 1;
-            end
-        end
-    end
-    
-    %% generate base measure
-    pi = sbp(gamma, K);
-    
-    %% generate children Dirichlet process
-    theta = zeros(K, J);
-    for j=1:J
-        theta(:,j) = hsbp(alpha, K, pi);
-    end
-    
-    %% generate distribution of each factors
-    H = zeros(V, K);
+    beta = repmat(beta, V, 1);
+    phi = zeros(K, V);
     for k=1:K
-        H(:,k) = dirichletrnd(beta .* ones(V,1));
+        phi(k, :) = dirichletrnd(beta);
     end
     
-    %% generate each document's words length
-    n_j = zeros(J, 1);
-    for j=1:J
-        n_j(j) = n_j_min + randi(margin);
-    end
-    
-    %% see expectation of M and K under current hyperparameters
-    M_mean = mean_m(alpha, n_j);
-    K_mean = expcrp(gamma, M_mean);
-    
-    %% generate words
     w = cell(J, 1);
-    loop = 1;
-    while loop <= converged
-        for j=1:J
-            w_buf = zeros(n_j(j), 1);
-            n = 1;
-
-            while n <= n_j(j)
-                k = mnrnd(1, theta(:,j));
-                idx = find(k == 1);
-                
-                if INCREMENTAL == true && idx == K
-                    mu_0 = betarnd(1, gamma);
-                    pi_new_0 = pi(K) * (1 - mu_0);
-                    pi_new_K = pi(K) * mu_0;
-
-                    pi_new = zeros(K+1,1);
-                    pi_new(K+1) = pi_new_0;
-                    pi_new(1:K-1) = pi(1:K-1);
-                    pi_new(K) = pi_new_K;
-
-                    mu_d = betarnd(alpha*pi(K)*mu_0, alpha*pi(K)*(1 - mu_0), 1, J);
-                    theta_new_0 = theta(K,:).*(1 - mu_d);
-                    theta_new_K = theta(K,:).*mu_d;
-
-                    theta_new = zeros(K+1,J);
-                    theta_new(K+1,:) = theta_new_0;
-                    theta_new(1:K-1,:) = theta(1:K-1,:);
-                    theta_new(K,:) = theta_new_K;
-
-                    pi = pi_new;
-                    theta = theta_new;
-                    H = [H dirichletrnd(beta .* ones(V,1))];
-
-                    K = K + 1;
-                    
-                    loop = 0;
-                else
-                    v = mnrnd(1, H(:, idx));
-                    w_buf(n) = find(v == 1);
-
-                    n = n + 1;
-                end
-            end
-
-            w{j} = w_buf;
+    n_j_rand = n_j_max - n_j_min;
+    for j=1:J
+        n_j = n_j_min + randi(n_j_rand);
+        x_j = zeros(n_j, 1);
+        theta = pi{end}(:, j);
+        
+        for i=1:n_j
+            k = find(mnrnd(1, theta));
+            v = find(mnrnd(1, phi(k, :)));
+            x_j(i) = v;
         end
         
-        loop = loop + 1;
+        w{j} = x_j;
     end
     
-    %% See word histogram of each document
-    whist = zeros(V, J);
-    for j=1:J
-        whist(:,j) = wordhist(w{j}, V);
-    end
+    [perplexity, loglik] = evalperp(w, pi{end}, phi);
     
-    assert(abs(sum(pi) - 1) < 1e-10, 'probability vector pi is corrupted');
-    assert(isempty(find(abs(sum(theta,1) - 1) > 1e-10, 1)), 'probability vector theta is corrupted');
+    groundtruth = struct('pi', {pi}, 'phi', phi, 'z', z, 'perplexity', perplexity, 'loglik', loglik);
+    drawdata(groundtruth);
+    
+    save('testdata_hdp', 'w', 'V', 'groundtruth');
+end
+
+function drawdata(groundtruth)
+    pi = groundtruth.pi;
+    z = groundtruth.z;
+    L = length(pi);
+    K = size(pi{1}, 1);
+    
+    N = size(z, 1);
+    z = [ones(N, 1) z (1:N)'];
     
     figure(1);
-        subplot(1,12,1); imagesc(pi); caxis([0 1]); set(gca, 'XTick', []); title('global-level');
-        subplot(1,12,3:12); imagesc(theta); caxis([0 1]); title('local-level');
+    subplot(1, 1, 1); stem(pi{1}, 'Marker', 'None');
+    xlim([0 K+1]);set(gca, 'XTick', []);
+    parent = 1;
     
-    figure(2);
-        imagesc(H); caxis([0 1]); title('topic-word distribution');
+    for l=2:L
+        idx = z(:, l - 1) == parent;
+        z_idx = unique(z(idx, l));
         
-    figure(3);
-        imagesc(whist); caxis([0 1]); title('document-word histogram');
-    
-    figure(4);
-        stem(pi, 'Marker', 'None');set(gca, 'XTick', []);
+        num = 4;
+        numpi = length(z_idx);
+        if numpi < num
+            num = numpi;
+        end
         
-    vocabulary = cell(V, 1);
-    for v=1:V
-        vocabulary{v} = v;
-    end
-    
-    N = J;
-    groundtruth.K = K;
-    groundtruth.pi = pi;
-    groundtruth.theta = theta;
-    groundtruth.H = H;
-    groundtruth.gamma = gamma;
-    groundtruth.alpha = alpha;
-    groundtruth.beta = beta;
-    groundtruth.M_mean = M_mean;
-    groundtruth.K_mean = K;
-    groundtruth.INCREMENTAL = INCREMENTAL;
-    save('testdata_hdp.mat', 'N', 'V', 'vocabulary', 'w', 'groundtruth');
-end
-
-function hist = wordhist(w, V)
-    hist = zeros(V, 1);
-    
-    for v=1:V
-        hist(v) = length(find(w == v));
-    end
-    
-    hist = hist./length(w);
-end
-
-function pi = hsbp(alpha, K, beta)
-    pi = zeros(K, 1);
-    
-    residual = 1;
-    
-    for k=1:K-1
-        pi_buf = betarnd(alpha*beta(k), alpha*(1 - sum(beta(1:k))));
+        idx = randperm(numpi, num);
+        nextparent = z_idx(idx);
         
-        pi(k) = pi_buf * residual;
-        residual = residual * (1 - pi_buf);
+        figure(l);
+        for i=1:num
+            subplot(num, 1, i); stem(pi{l}(:, nextparent(i)), 'Marker', 'None');
+            xlim([0 K+1]);set(gca, 'XTick', []);
+        end
+        
+        parent = nextparent(1);
     end
-    
-    pi(K) = 1 - sum(pi);
-    
-    assert(isempty(find(pi < 0, 1)), 'probability vector contains minus');
 end
 
-function beta = sbp(gamma, K)
-    beta = zeros(K, 1);
-
-    beta_buf = betarnd(1, gamma, [K,1]);
-    residual = 1;
     
-    for k=1:K-1
-       beta(k) = beta_buf(k) * residual;
-       residual = residual * (1 - beta_buf(k));
-    end
     
-    beta(K) = 1 - sum(beta);
     
-    assert(isempty(find(beta < 0, 1)), 'probability vector contains minus');
-end
+    

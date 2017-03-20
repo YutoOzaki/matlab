@@ -5,6 +5,6 @@
 % subplot(413);plot(dirichletrnd(0.01  .* ones(1000,1))); title('beta = 0.01');
 % subplot(414);plot(dirichletrnd(0.001 .* ones(1000,1))); title('beta = 0.001');
 function x = dirichletrnd(alpha)
-    x = gamrnd(alpha,1);
+    x = gamrnd(alpha, 1);
     x = x./sum(x);
 end
