@@ -4,6 +4,7 @@ function script
     nyt_data = 'C:\Users\yuto\Documents\MATLAB\data\topicmodel\NewYorkTimesNews\nyt_data.txt';
     nyt_vocab = 'C:\Users\yuto\Documents\MATLAB\data\topicmodel\NewYorkTimesNews\nyt_vocab.dat';
     [x, vocab] = loaddata(nyt_data, nyt_vocab);
+    %[x, vocab] = minidata;
     N = size(x, 2);
     V = length(vocab);
     assert(size(x, 1) == V, 'dimension of data and vocabulary is not agreed');
@@ -20,9 +21,9 @@ function script
     end
     numnode = sum(children);
     
-    alp = [50; 20; 10];
-    bta = ones(V, 1);
-    gma = 1;
+    alp = [2; 1; 0.5];
+    bta = ones(V, 1) ./ V;
+    gma = 2;
     
     %% define paths
     [c, endstick] = treeidx(T, children);
@@ -78,8 +79,16 @@ function script
     fullpathidx = sum(children(1:(L - 1))) + 1:numnode;
     endstick_flip = 1 - endstick;
     perplexity = zeros(N + 1, numepoch);
-    numsamp = 200;
+    numsamp = 100;
     y = zeros(numsamp, V);
+    dist = zeros(numsamp, 1);
+    if V > 9
+        numwrd = 10;
+    else
+        numwrd = V;
+    end
+    
+    figure(1); plot(sum(x, 2)); title('histogram of words in the corpora');
     
     for epoch=1:numepoch
         fprintf('epoch %d [%s]\n', epoch, datetime);
@@ -103,6 +112,8 @@ function script
         logv_mean(1, :) = endstick_flip' .* (psi(v_prm(1, :)) - tmp);
         logv_mean(2, :) = endstick_flip' .* (psi(v_prm(2, :)) - tmp);
         
+        %checkzerograd_v(gma, v_prm, endstick_flip, fullpathidx, c, c_prm, 1e-6, 5, 2);
+        
         % update for variational parameters of theta
         tic;
         fprintf(' update for variational parameters of theta...');
@@ -115,6 +126,8 @@ function script
         fprintf('completed (%3.3f sec)\n', t);
         
         logtheta_mean = psi(theta_prm) - repmat(psi(sum(theta_prm, 1)), L, 1);
+        
+        %checkzerograd_theta(z_prm, theta_prm, x, alp, 1e-6, 4, 2);
         
         % update for variational parameters of phi
         tic;
@@ -136,6 +149,8 @@ function script
         fprintf('completed (%3.3f sec)\n', t);
         
         logphi_mean = psi(phi_prm) - repmat(psi(sum(phi_prm, 1)), V, 1);
+        
+        %checkzerograd_phi(z_prm, c_prm, phi_prm, x, c, bta, fullpathidx, 1e-6, 4, 2);
         
         % update for variational parameters of c
         tic;
@@ -173,13 +188,15 @@ function script
 
                 buf = buf + sum(z_prm(:, L, n) .* x(:, n) .* logphi_mean(:, i));
                 
-                c_prm(i, n) = buf;
+                c_prm(i, n) = buf - 1;
             end
 
             fprintf(repmat('\b', [1, length(num2str(n))]));
         end
         t = toc;
         fprintf('completed (%3.3f sec)\n', t);
+        
+        %checkzerograd_c(logv_mean, z_prm, exp(c_prm), logphi_mean, x, c, fullpathidx, 1e-9, 5, 2);
 
         % normalization
         buf = c_prm(numnode - children(L) + 1:numnode, :);
@@ -208,10 +225,9 @@ function script
         for n=1:N
             fprintf('%d', n);
             c_l(2:L) = 0;
-            hotidx = x(:, n) > 0;
             
             % l = 1, root node
-            z_prm(:, 1, n) = logtheta_mean(1, n) + hotidx .* logphi_mean(:, 1);
+            z_prm(:, 1, n) = x(:, n) .* (logtheta_mean(1, n) + logphi_mean(:, 1)) - 1;
             
             % L > l > 1
             for l=2:(L-1)
@@ -224,7 +240,7 @@ function script
                     buf = buf + c_prm(i, n) .* logphi_mean(:, ib);
                 end
 
-                z_prm(:, l, n) = logtheta_mean(l, n) + hotidx .* buf;
+                z_prm(:, l, n) = x(:, n) .* (logtheta_mean(l, n) + buf) - 1;
             end
             
             % l = L, full path
@@ -232,13 +248,15 @@ function script
             for i=fullpathidx
                 buf = buf + c_prm(i, n) .* logphi_mean(:, i);
             end
-            z_prm(:, L, n) = logtheta_mean(L, n) + hotidx .* buf;
+            z_prm(:, L, n) = x(:, n) .* (buf + logtheta_mean(L, n)) - 1;
             
             fprintf(repmat('\b', [1, length(num2str(n))]));
         end
         t = toc;
         fprintf('completed (%3.3f sec)\n', t);
 
+        %checkzerograd_z(logtheta_mean, exp(z_prm), c_prm, logphi_mean, x, c, fullpathidx, 1e-9, 4, 2);
+        
         % normalization
         for n=1:N
             buf = z_prm(:, :, n);
@@ -380,8 +398,8 @@ function script
         t = toc;
         fprintf('completed (%3.3f sec)\n', t);
         
-        figure(1);
-        subplot(2,1,1); image(perplexity(2:50, 1:epoch), 'CDataMapping', 'scaled');
+        figure(2);
+        subplot(2,1,1); image(perplexity(2:end, 1:epoch), 'CDataMapping', 'scaled');
         subplot(2,1,2); plot(perplexity(1, 1:epoch));
         drawnow;
         
@@ -390,42 +408,41 @@ function script
         % Growing, pruning and merging of branches
         
         % Recovery sampling
+        y(:, :) = 0;
         n = randi(N);
-        n_j = sum(x(:, n));
-        I = sum(children(1:L-1));
-        figure(2);
-        subplot(5, 1, 1); plot(x(:, n)); title(sprintf('n = %d', n));
+        v_idx = find(x(:, n));
+        I = sum(children(1:(L-1)));
+        figure(3);
+        subplot(6, 1, 1); plot(x(:, n)); title(sprintf('n = %d', n));
             
         for k=1:numsamp
-            c_l(2:L) = 0;
-            
-            i = find(mnrnd(1, c_prm(fullpathidx, n)));
-            theta = dirichletrnd(theta_prm(:, n));
-            z = mnrnd(n_j, theta);
-
-            phi = dirichletrnd(phi_prm(:, 1));
-            y(k, :) = mnrnd(z(1), phi);
-
-            for l=2:(L-1)
-                c_l(l) = c(I + i, l);
-                [~, ~, ib] = intersect(c_l, c, 'rows');
-
-                phi = dirichletrnd(phi_prm(:, ib));
-                y(k, :) =  y(k, :) + mnrnd(z(l), phi);
+            for v=1:length(v_idx)
+                w = v_idx(v);
+                
+                for j=1:x(w, n)
+                    c_i(:) = 0;
+                    
+                    l = find(mnrnd(1, z_prm(w, :, n)));
+                    i = find(mnrnd(1, c_prm(fullpathidx, n)));
+                    c_i(1:l) = c(I + i, 1:l);
+                    [~, ~, ib] = intersect(c_i, c, 'rows');
+                    phi = dirichletrnd(phi_prm(:, ib));
+                    y(k, :) = y(k, :) + mnrnd(1, phi);
+                end
             end
-
-            phi = dirichletrnd(phi_prm(:, I + i));
-            y(k, :) = y(k, :) + mnrnd(z(L), phi);
+            
+            dist(k) = sum(abs(x(:, n) - y(k, :)'));
         end
         y_mean = mean(y);
-        subplot(5, 1, 2); plot(y_mean); title('average');
-        subplot(5, 1, 3); plot(y(1, :));
-        subplot(5, 1, 4); plot(y(2, :));
-        subplot(5, 1, 5); plot(y(3, :));
+        [~, i] = min(dist);
+        subplot(6, 1, 2); plot(y(i, :)); title('nearest');
+        subplot(6, 1, 3); plot(y_mean); title('average');
+        subplot(6, 1, 4); plot(y(1, :)); title('sample 1');
+        subplot(6, 1, 5); plot(y(2, :)); title('sample 2');
+        subplot(6, 1, 6); plot(y(3, :)); title('sample 3');
         drawnow;
         
         % Word topic visualization
-        numwrd = 10;
         numpath = 1;
         wrdbox = cell(L*numpath, 2 + numwrd);
         for k=1:10
@@ -459,12 +476,12 @@ function script
     end
 end
 
-function checkzerograd_theta(z_prm, theta_prm, x, alp, seed, num)
+function checkzerograd_theta(z_prm, theta_prm, x, alp, eps, seed, num)
     prmname = 'theta_prm';
     rng(seed);
     
     ELBO = zeros(2, 1);
-    h = [1e-2 -1e-2];
+    h = [eps -eps];
     dim = size(theta_prm, 1);
     
     L = size(theta_prm, 1);
@@ -475,6 +492,7 @@ function checkzerograd_theta(z_prm, theta_prm, x, alp, seed, num)
         dstidx = randi(N);
         prmidx = randi(dim);
         val = theta_prm(prmidx, dstidx);
+        ELBO(:, 1) = 0;
     
         for loop=1:2
             theta_prm(prmidx, dstidx) = val + h(loop);
@@ -494,19 +512,20 @@ function checkzerograd_theta(z_prm, theta_prm, x, alp, seed, num)
             buf = sum((theta_prm - 1) .* logtheta_mean) + gammaln(sum(theta_prm)) - sum(gammaln(theta_prm));
             ELBO(loop) = ELBO(loop) - sum(buf);
         end
+        theta_prm(prmidx, dstidx) = val;
         t = toc;
 
-        delta = (ELBO(1) - ELBO(2))/2*h(1);
-        fprintf('%e: numerical gradient of %s(%d, %d) [%3.3f sec]\n', delta, prmname, prmidx, dstidx, t);
+        delta = (ELBO(1) - ELBO(2))/(2*h(1));
+        fprintf('%e: numerical gradient of %s(%d, %d) = %e [%3.3f sec]\n', delta, prmname, prmidx, dstidx, val, t);
     end
 end
 
-function checkzerograd_phi(z_prm, c_prm, phi_prm, x, c, bta, fullpathidx, seed, num)
+function checkzerograd_phi(z_prm, c_prm, phi_prm, x, c, bta, fullpathidx, eps, seed, num)
     prmname = 'phi_prm';
     rng(seed);
     
     ELBO = zeros(2, 1);
-    h = [1e-5 -1e-5];
+    h = [eps -eps];
     dim = size(phi_prm, 1);
     
     L = size(c, 2);
@@ -522,6 +541,7 @@ function checkzerograd_phi(z_prm, c_prm, phi_prm, x, c, bta, fullpathidx, seed, 
         dstidx = randi(numnode);
         prmidx = randi(dim);
         val = phi_prm(prmidx, dstidx);
+        ELBO(:, 1) = 0;
     
         for loop=1:2
             phi_prm(prmidx, dstidx) = val + h(loop);
@@ -555,19 +575,20 @@ function checkzerograd_phi(z_prm, c_prm, phi_prm, x, c, bta, fullpathidx, seed, 
             buf = sum((phi_prm - 1) .* logphi_mean) + gammaln(sum(phi_prm)) - sum(gammaln(phi_prm));
             ELBO(loop) = ELBO(loop) - sum(buf);
         end
+        phi_prm(prmidx, dstidx) = val;
         t = toc;
 
-        delta = (ELBO(1) - ELBO(2))/2*h(1);
-        fprintf('%e: numerical gradient of %s(%d, %d) [%3.3f sec]\n', delta, prmname, prmidx, dstidx, t);
+        delta = (ELBO(1) - ELBO(2))/(2*h(1));
+        fprintf('%e: numerical gradient of %s(%d, %d) = %e [%3.3f sec]\n', delta, prmname, prmidx, dstidx, val, t);
     end
 end
 
-function checkzerograd_z(logtheta_mean, z_prm, c_prm, logphi_mean, x, c, fullpathidx, seed, num)
+function checkzerograd_z(logtheta_mean, z_prm, c_prm, logphi_mean, x, c, fullpathidx, eps, seed, num)
     prmname = 'z_prm';
     rng(seed);
     
     ELBO = zeros(2, 1);
-    h = [1e-4 -1e-4];
+    h = [eps -eps];
     dim = size(z_prm, 1);
     
     L = size(c, 2);
@@ -582,6 +603,7 @@ function checkzerograd_z(logtheta_mean, z_prm, c_prm, logphi_mean, x, c, fullpat
         dstidx = randi(L);
         dtaidx = randi(N);
         val = z_prm(prmidx, dstidx, dtaidx);
+        ELBO(:, 1) = 0;
     
         for loop=1:2
             z_prm(prmidx, dstidx, dtaidx) = val + h(loop);
@@ -617,19 +639,20 @@ function checkzerograd_z(logtheta_mean, z_prm, c_prm, logphi_mean, x, c, fullpat
             %q(z)
             ELBO(loop) = ELBO(loop) - sum(sum(sum(z_prm .* log(z_prm))));
         end
+        z_prm(prmidx, dstidx, dtaidx) = val;
         t = toc;
 
-        delta = (ELBO(1) - ELBO(2))/2*h(1);
-        fprintf('%e: numerical gradient of %s(%d, %d, %d) [%3.3f sec]\n', delta, prmname, prmidx, dstidx, dtaidx, t);
+        delta = (ELBO(1) - ELBO(2))/(2*h(1));
+        fprintf('%e: numerical gradient of %s(%d, %d, %d) = %e [%3.3f sec]\n', delta, prmname, prmidx, dstidx, dtaidx, val, t);
     end
 end
 
-function checkzerograd_c(logv_mean, z_prm, c_prm, logphi_mean, x, c, fullpathidx, seed, num)
+function checkzerograd_c(logv_mean, z_prm, c_prm, logphi_mean, x, c, fullpathidx, eps, seed, num)
     prmname = 'c_prm';
     rng(seed);
     
     ELBO = zeros(2, 1);
-    h = [1e-4 -1e-4];
+    h = [eps -eps];
     dim = size(c_prm, 1);
     
     L = size(c, 2);
@@ -640,9 +663,10 @@ function checkzerograd_c(logv_mean, z_prm, c_prm, logphi_mean, x, c, fullpathidx
 
     for numcount=1:num
         tic;
-        dstidx = randi(N);
         prmidx = randi(dim);
+        dstidx = randi(N);
         val = c_prm(prmidx, dstidx);
+        ELBO(:, 1) = 0;
     
         for loop=1:2
             c_prm(prmidx, dstidx) = val + h(loop);
@@ -697,19 +721,20 @@ function checkzerograd_c(logv_mean, z_prm, c_prm, logphi_mean, x, c, fullpathidx
             %q(c)
             ELBO(loop) = ELBO(loop) - sum(sum(c_prm(fullpathidx, :).*log(c_prm(fullpathidx, :))));
         end
+        c_prm(prmidx, dstidx) = val;
         t = toc;
 
-        delta = (ELBO(1) - ELBO(2))/2*h(1);
-        fprintf('%e: numerical gradient of %s(%d, %d) [%3.3f sec]\n', delta, prmname, prmidx, dstidx, t);
+        delta = (ELBO(1) - ELBO(2))/(2*h(1));
+        fprintf('%e: numerical gradient of %s(%d, %d) = %e, [%3.3f sec]\n', delta, prmname, prmidx, dstidx, val, t);
     end
 end
 
-function checkzerograd_v(gma, v_prm, endstick_flip, fullpathidx, c, c_prm, seed, num)
+function checkzerograd_v(gma, v_prm, endstick_flip, fullpathidx, c, c_prm, eps, seed, num)
     prmname = 'v_prm';
     rng(seed);
     
     ELBO = zeros(2, 1);
-    h = [1e-4 -1e-4];
+    h = [eps -eps];
     dim = size(v_prm, 1);
     
     L = size(c, 2);
@@ -726,6 +751,7 @@ function checkzerograd_v(gma, v_prm, endstick_flip, fullpathidx, c, c_prm, seed,
         dstidx = randi(numnode);
         prmidx = randi(dim);
         val = v_prm(prmidx, dstidx);
+        ELBO(:, 1) = 0;
     
         for loop=1:2
             v_prm(prmidx, dstidx) = val + h(loop);
@@ -769,11 +795,17 @@ function checkzerograd_v(gma, v_prm, endstick_flip, fullpathidx, c, c_prm, seed,
             buf = buf + (v_prm(1, :) - 1).*logv_mean(1, :) + (v_prm(2, :) - 1).*logv_mean(2, :);
             ELBO(loop) = ELBO(loop) - sum(buf);
         end
+        v_prm(prmidx, dstidx) = val;
         t = toc;
 
-        delta = (ELBO(1) - ELBO(2))/2*h(1);
-        fprintf('%e: numerical gradient of %s(%d, %d) [%3.3f sec]\n', delta, prmname, prmidx, dstidx, t);
+        delta = (ELBO(1) - ELBO(2))/(2*h(1));
+        fprintf('%e: numerical gradient of %s(%d, %d) = %e [%3.3f sec]\n', delta, prmname, prmidx, dstidx, val, t);
     end
+end
+
+function [x, vocab] = minidata
+    vocab = {'a','b','c'};
+    x = [0 2 0 0 0 2;0 1 0 2 2 0;1 0 1 0 0 2];
 end
 
 function [x, vocab] = loaddata(datapath, vocabpath)
@@ -787,7 +819,7 @@ function [x, vocab] = loaddata(datapath, vocabpath)
     fclose(fileID);
     vocab = vocab{1};
     
-    N = length(data);N=1000;
+    N = length(data);
     V = length(vocab);
     x = zeros(V, N);
     fprintf('formatting data (%d documents)...', N);
