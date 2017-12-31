@@ -87,6 +87,7 @@ function script
     else
         numwrd = V;
     end
+    I = sum(children(1:(L-1)));
     
     figure(1); plot(sum(x, 2)); title('histogram of words in the corpora');
     
@@ -155,15 +156,19 @@ function script
         % update for variational parameters of c
         tic;
         fprintf(' update for variational parameters of c (%d data)...', N);
+        tmp = zeros(V, L);
         for n=1:N
-            fprintf('%d', n);
+            % l = 1, root node
+            buf_n = sum(z_prm(:, 1, n) .* x(:, n) .* logphi_mean(:, 1));
+                
+            for l=2:L
+                tmp(:, l) = z_prm(:, l, n) .* x(:, n);
+            end
             
             % the probability choosing root node (i = 1) is always 1 so it can be skipped
             for i=fullpathidx
+                buf = buf_n;
                 c_l(2:L) = 0;
-                
-                % l = 1, root node
-                buf = sum(z_prm(:, 1, n) .* x(:, n) .* logphi_mean(:, 1));
                 
                 % L > l > 1
                 for l=2:(L-1)
@@ -177,7 +182,7 @@ function script
                     end
 
                     % expectation of p(x|W, z)
-                    buf = buf + sum(z_prm(:, l, n) .* x(:, n) .* logphi_mean(:, ib));
+                    buf = buf + sum(tmp(:, l) .* logphi_mean(:, ib));
                 end
 
                 % l = L, full path
@@ -186,12 +191,11 @@ function script
                     buf = buf + logv_mean(2, i - j);
                 end
 
-                buf = buf + sum(z_prm(:, L, n) .* x(:, n) .* logphi_mean(:, i));
+                buf = buf + sum(tmp(:, L) .* logphi_mean(:, i));
                 
                 c_prm(i, n) = buf - 1;
             end
 
-            fprintf(repmat('\b', [1, length(num2str(n))]));
         end
         t = toc;
         fprintf('completed (%3.3f sec)\n', t);
@@ -219,6 +223,79 @@ function script
             L_i = L - length(find(c_i == 0));
         end
 
+        %{
+        % Pruning
+        idx = find(sum(c_prm, 2) < 1e-6);
+        
+        if isempty(idx) == 0
+            numprune = length(idx);
+            fprintf('  pruning %d paths...', numprune);
+            
+            idxrmv = true(numnode, 1);
+            idxrmv(idx) = false;
+            
+            [c_prm, phi_prm, v_prm, c, children, fullpathidx, endstick] = reduction(idxrmv, c_prm, phi_prm, v_prm, c, children);
+            
+            logphi_mean = psi(phi_prm) - repmat(psi(sum(phi_prm, 1)), V, 1);
+            
+            endidx = find(endstick == 1);
+            endstick_flip = 1 - endstick;
+            
+            numnode = sum(children);
+            
+            logv_mean = zeros(2, numnode);
+            tmp = psi(v_prm(1, :) + v_prm(2, :));
+            logv_mean(1, :) = endstick_flip' .* (psi(v_prm(1, :)) - tmp);
+            logv_mean(2, :) = endstick_flip' .* (psi(v_prm(2, :)) - tmp);
+        end
+            
+        % Merging
+        D = c_prm(fullpathidx, :) * c_prm(fullpathidx, :)';
+        for i=fullpathidx
+            for j=i+1:numnode
+                D(i-I, j-I) = D(i-I, j-I) / (norm(c_prm(i, :)) * norm(c_prm(j, :)));
+            end
+        end
+        D = triu(D, 1);
+        [row, col] = find(D > 0.95);
+        
+        if isempty(row) == 0
+            [~, idx] = unique(col);
+            row = row(idx);
+            col = col(idx);
+            [~, idx] = unique(row);
+            row = row(idx);
+            col = col(idx);
+            nummerge = length(row);
+            
+            fprintf('  merging %d paths...\n', nummerge);
+
+            for k=1:nummerge
+                i = I + row(k);
+                j = I + col(k);
+
+                c_prm(i, :) = c_prm(i, :) + c_prm(j, :);
+            end
+
+            idxrmv = true(numnode, 1);
+            idxrmv(I + col) = false;
+            
+            [c_prm, phi_prm, v_prm, c, children, fullpathidx, endstick] = reduction(idxrmv, c_prm, phi_prm, v_prm, c, children);
+            
+            logphi_mean = psi(phi_prm) - repmat(psi(sum(phi_prm, 1)), V, 1);
+            
+            endidx = find(endstick == 1);
+            endstick_flip = 1 - endstick;
+            
+            numnode = sum(children);
+            
+            logv_mean = zeros(2, numnode);
+            tmp = psi(v_prm(1, :) + v_prm(2, :));
+            logv_mean(1, :) = endstick_flip' .* (psi(v_prm(1, :)) - tmp);
+            logv_mean(2, :) = endstick_flip' .* (psi(v_prm(2, :)) - tmp);
+        end
+        %}
+        
         % update for variational parameters of z
         tic;
         fprintf(' update for variational parameters of z (%d data)...', N);
@@ -266,98 +343,6 @@ function script
             buf = exp(buf);
             z_prm(:, :, n) = buf./repmat(sum(buf, 2), 1, L);
         end
-
-        %{
-        % Calculate ELBO
-        fprintf(' check ELBO...');
-        tic;
-        
-        %p(v|lambda)
-        ELBO(epoch) = ELBO(epoch) + (gma - 1) * sum(logv_mean(2, :));
-        
-        %p(c|v)
-        for n=1:N
-            for i=fullpathidx
-                buf = 0;
-                c_i = c(i, :);
-                c_l(2:L) = 0;
-
-                for l=2:(L-1)
-                    c_l(l) = c_i(l);
-                    [~, ~, ib] = intersect(c_l, c, 'rows');
-
-                    buf = buf + logv_mean(1, ib);
-                    for j=1:(c_i(l) - 1)
-                        buf = buf + logv_mean(2, ib - j);
-                    end
-                end
-                
-                buf = buf + logv_mean(1, i);
-                for j=1:(c_i(L) - 1)
-                    buf = buf + logv_mean(2, i - j);
-                end
-                    
-                ELBO(epoch) = ELBO(epoch) + c_prm(i, n) * buf;
-            end
-        end
-        
-        %q(v)
-        buf = gammaln(v_prm(1, :) + v_prm(2, :)) - gammaln(v_prm(1, :)) - gammaln(v_prm(2, :));
-        buf = buf + (v_prm(1, :) - 1).*logv_mean(1, :) + (v_prm(2, :) - 1).*logv_mean(2, :);
-        ELBO(epoch) = ELBO(epoch) - sum(buf);
-        
-        %p(w|c,z,phi)
-        for n=1:N
-            for i=fullpathidx
-                buf = 0;
-                c_l(2:L) = 0;
-                
-                buf = buf + sum(z_prm(:, 1, n) .* x(:, n) .* logphi_mean(:, 1));
-                
-                for l=2:(L-1)
-                    c_l(l) = c(i, l);
-                    [~, ~, ib] = intersect(c_l, c, 'rows');
-
-                    buf = buf + sum(z_prm(:, l, n) .* x(:, n) .* logphi_mean(:, ib));
-                end
-                
-                buf = buf + sum(z_prm(:, L, n) .* x(:, n) .* logphi_mean(:, i));
-                
-                ELBO(epoch) = ELBO(epoch) + c_prm(i, n) * buf;
-            end
-        end
-        
-        %q(c)
-        ELBO(epoch) = ELBO(epoch) - sum(sum(c_prm(fullpathidx, :).*log(c_prm(fullpathidx, :))));
-        
-        %q(z)
-        ELBO(epoch) = ELBO(epoch) - sum(sum(sum(z_prm .* log(z_prm))));
-        
-        %p(phi|beta)
-        ELBO(epoch) = ELBO(epoch) + sum(sum(repmat((bta - 1), 1, numnode) .* logphi_mean));
-        
-        %q(phi)
-        buf = sum((phi_prm - 1) .* logphi_mean) + gammaln(sum(phi_prm)) - sum(gammaln(phi_prm));
-        ELBO(epoch) = ELBO(epoch) - sum(buf);
-        
-        %p(theta|alpha)
-        ELBO(epoch) = ELBO(epoch) + sum(sum(repmat((alp - 1), 1, N) .* logtheta_mean));
-        
-        %p(z|theta)
-        for n=1:N
-            for l=1:L
-                ELBO(epoch) = ELBO(epoch) + sum(x(:, n) .* z_prm(:, l, n)) .* logtheta_mean(l, n);
-            end
-        end
-        
-        %q(theta)
-        buf = sum((theta_prm - 1) .* logtheta_mean) + gammaln(sum(theta_prm)) - sum(gammaln(theta_prm));
-        ELBO(epoch) = ELBO(epoch) - sum(buf);
-        
-        t = toc;
-        fprintf('%3.3f (%3.3f sec)\n', ELBO(epoch), t);
-        figure(1); plot(ELBO); xlim([0 epoch]); drawnow;
-        %}
         
         % Calculate perplexity
         tic;
@@ -404,16 +389,13 @@ function script
         drawnow;
         
         fprintf(' log-likelihood: %e\n', perplexity(1, epoch));
-        
-        % Growing, pruning and merging of branches
-        
+               
         % Recovery sampling
         y(:, :) = 0;
         n = randi(N);
         v_idx = find(x(:, n));
-        I = sum(children(1:(L-1)));
         figure(3);
-        subplot(6, 1, 1); plot(x(:, n)); title(sprintf('n = %d', n));
+        subplot(6, 1, 1); plot(x(:, n)); title(sprintf('n = %d (%d words)', n, sum(x(:,n))));
             
         for k=1:numsamp
             for v=1:length(v_idx)
@@ -434,44 +416,157 @@ function script
             dist(k) = sum(abs(x(:, n) - y(k, :)'));
         end
         y_mean = mean(y);
-        [~, i] = min(dist);
-        subplot(6, 1, 2); plot(y(i, :)); title('nearest');
-        subplot(6, 1, 3); plot(y_mean); title('average');
-        subplot(6, 1, 4); plot(y(1, :)); title('sample 1');
-        subplot(6, 1, 5); plot(y(2, :)); title('sample 2');
-        subplot(6, 1, 6); plot(y(3, :)); title('sample 3');
+        [~, imax] = max(dist);
+        [~, imin] = min(dist);
+        subplot(6, 1, 2); plot(y(imin, :)); title(sprintf('nearest (dist = %d)', dist(imin)/2));
+        subplot(6, 1, 3); plot(y(imax, :)); title(sprintf('farthest (dist = %d)', dist(imax)/2));
+        subplot(6, 1, 4); plot(y_mean); title('average');
+        subplot(6, 1, 5); plot(y(1, :)); title(sprintf('sample 1 (dist = %d)', dist(1)/2));
+        subplot(6, 1, 6); plot(y(2, :)); title(sprintf('sample 2 (dist = %d)', dist(2)/2));
         drawnow;
         
-        % Word topic visualization
-        numpath = 1;
-        wrdbox = cell(L*numpath, 2 + numwrd);
-        for k=1:10
-            n = randi(N);
-            p = c_prm((numnode - children(L) + 1):numnode, n);
-            [~, I_c] = sort(p, 'descend');
-            [~, I_theta] = sort(theta_prm(:, n), 'descend');
-            fprintf('[n = %d] ', n);
-            
-            for j=1:numpath
-                i = numnode - children(L) + I_c(j);
-                c_j = c(i, :);
+        % tree plot
+        treevec = zeros(1, numnode);
+        i = 2;
+        c_i(:) = 0;
+        for l=2:L
+            for j=1:children(l)
+                c_i(1:l-1) = c(i, 1:l-1);
+                [~, ~, ib] = intersect(c_i, c, 'rows');
 
-                for l=1:L
-                    c_l(1:L) = 0;
-                    c_l(1:I_theta(l)) = c_j(1:I_theta(l));
-                    [~, ~, ib] = intersect(c_l, c, 'rows');
-
-                    [~, I_phi] = sort(phi_prm(:, ib), 'descend');
-                    wrdbox((j-1)*L + l, 3:2+numwrd) = vocab(I_phi(1:numwrd))';
-                    wrdbox((j-1)*L + l, 1) = num2cell(I_theta(l));
-                    wrdbox((j-1)*L + l, 2) = num2cell(ib);
-                end
-
-                fprintf(' q(c_%d) = %3.3f, ', i, c_prm(i, n));
+                treevec(i) = ib;
+                i = i + 1;
             end
+        end
+        
+        mainpath = sum(c_prm, 2) ./ N;
+        [a, b] = treelayout(treevec);
+        figure(4); clf(4);
+        figure(4); subplot(1,2,1); scatter(a, b, 300 .* mainpath); axis([0 1 0.1 0.9]); hold on;
+        
+        [~, idx] = sort(mainpath(fullpathidx), 'descend');
+        idx = idx + I;
+        
+        numplot = 12;
+        lalpha = mainpath(idx(1:numplot));
+        textx = 1e-2 .* ones(L, 1);
+        nodup = zeros(numplot, L) - 1;
             
-            fprintf('\n');
-            disp(wrdbox);
+        for i=1:numplot
+            childidx = idx(i);
+            parentidx = treevec(childidx);
+            lcolor = [0.8 0.8 1-lalpha(i)];
+            
+            for l=L:-1:2
+                if isempty(find(nodup == childidx, 1))
+                    figure(4); subplot(1,2,1); plot([a(childidx) a(parentidx)], [b(childidx) b(parentidx)],...
+                        'LineWidth', 0.3, 'Color', lcolor); hold on;
+
+                    [~, widx] = sort(phi_prm(childidx, :), 'descend');
+                    topNwrd = sprintf('%d (%2.1f%%)', childidx, 100*mainpath(childidx));
+                    for j=1:8
+                        topNwrd = strjoin({topNwrd, vocab{widx(j)}}, '\n');
+                    end
+                    figure(4); subplot(1,2,1); text(a(childidx), b(childidx) + 0.01, num2str(childidx)); hold on;
+                    figure(4); subplot(1,2,2); text(textx(l), b(childidx), topNwrd);
+
+                    textx(l) = textx(l) + 0.1;
+                end
+                
+                nodup(i, l) = childidx;
+                childidx = parentidx;
+                parentidx = treevec(childidx);
+            end
+        end
+        
+        [~, widx] = sort(phi_prm(1, :), 'descend');
+        topNwrd = sprintf('%d (%2.1f%%)', 1, 100*mainpath(1));
+        for j=1:8
+            topNwrd = strjoin({topNwrd, vocab{widx(j)}}, '\n');
+        end
+        figure(4); subplot(1,2,1); text(a(1), b(1) + 0.01, num2str(childidx)); hold off;
+        figure(4); subplot(1,2,2); text(textx(1), b(1), topNwrd); axis([0 1 0.1 0.9]);
+    end
+end
+
+function [c_prm, phi_prm, v_prm, c, children, fullpathidx, endstick] = reduction(idxrmv, c_prm, phi_prm, v_prm, c, children)
+    numnode = size(c, 1);
+    L = size(c, 2);
+    I = sum(children(1:L-1));
+    numreduct = length(find(~idxrmv));
+    
+    c_prm = c_prm(idxrmv, :);
+    phi_prm = phi_prm(:, idxrmv);
+    v_prm = v_prm(:, idxrmv);
+    c = c(idxrmv, :);
+
+    numnode = numnode - numreduct;
+    children(L) = children(L) - numreduct;
+    children(2:(L-1)) = 1;
+
+    for l=L:-1:3
+        j = 1;
+
+        for i=(I+1):(numnode-1)
+            c(i, l - 1) = j;
+            idxdif = c(i+1, l) - c(i, l);
+
+            if idxdif > 1
+                c(i+1, l) = c(i, l) + 1;
+            elseif idxdif < 0
+                j = j + 1;
+                children(l - 1) = children(l - 1) + 1;
+
+                if c(i+1, l) ~= 1
+                    c(i+1, l) = 1;
+                end
+            end
+        end
+        
+        c(numnode, l - 1) = j;
+        
+        idx = find(c(:, l - 1) > j);
+        if isempty(idx) == 0
+            c(idx, :) = [];
+            c_prm(idx, :) = [];
+            phi_prm(:, idx) = [];
+            v_prm(:, idx) = [];
+            numnode = numnode - length(idx);
+        end
+    end
+    
+    assert(numnode == sum(children), 'error in the merge operation');
+    I = sum(children(1:(L-1)));
+    fullpathidx = (I+1):numnode;
+
+    for l=2:(L-1)
+        j = 1;
+
+        for i=sum(children(1:l-1))+1:sum(children(1:l))
+            for ll=2:l
+                c(i, ll) = j;
+                j = j + 1;
+            end
+        end
+    end
+
+    endstick = zeros(numnode, 1);
+    endstick(1) = 1;
+    endstick(end) = 1;
+    j = 2;
+    for l=2:L
+        for i=1:children(l)
+            idxdif = c(j+1, l) - c(j, l);
+
+            if idxdif < 0
+                endstick(j) = 1;
+            end
+
+            j = j + 1;
+
+            if j == numnode
+                break;
+            end
         end
     end
 end
