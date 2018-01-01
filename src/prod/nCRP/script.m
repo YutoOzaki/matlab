@@ -415,7 +415,7 @@ function script
                 w = v_idx(v);
                 
                 for j=1:x(w, n)
-                    l = mnrnd(1, z_prm(w, :, n));
+                    l = mnrnd(1, z_prm(w, :, n)) == 1;
                     y(k, :) = y(k, :) + mnrnd(1, phi_mean(:, l));
                 end
             end
