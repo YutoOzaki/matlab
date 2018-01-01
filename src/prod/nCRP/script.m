@@ -23,9 +23,9 @@ function script
     end
     numnode = sum(children);
     
-    alp = [1; 1; 1];
-    bta = ones(V, 1) ./ V;
-    gma = 2;
+    alp = [2; 1; 0.5];
+    bta = 10 .* ones(V, 1) ./ V;
+    gma = 3;
     
     %% define paths
     [c, endstick] = treeidx(T, children);
@@ -380,15 +380,20 @@ function script
         end
         
         perplexity(1, epoch) = sum(perplexity(2:end, epoch));
+        parfor n=1:N
+            perplexity(n + 1, epoch) = exp(-perplexity(n + 1, epoch) / sum(x(:, n)));
+        end
+        perplexity(1, epoch) = exp(-perplexity(1, epoch) / sum(sum(x)));
+        
         t = toc;
         fprintf('completed (%3.3f sec)\n', t);
         
         figure(2);
-        subplot(2,1,1); image(perplexity(2:end, 1:epoch), 'CDataMapping', 'scaled');
-        subplot(2,1,2); plot(perplexity(1, 1:epoch));
+        subplot(2,1,1); image(perplexity(2:end, 1:epoch), 'CDataMapping', 'scaled'); title('perplexity per document');
+        subplot(2,1,2); plot(perplexity(1, 1:epoch)); title(sprintf('perplexity (V = %d)', V));
         drawnow;
         
-        fprintf(' log-likelihood: %e\n', perplexity(1, epoch));
+        fprintf(' perplexity out of the vocabulary consisting of %d words: %e\n', V, perplexity(1, epoch));
                
         % Recovery sampling
         y(:, :) = 0;
