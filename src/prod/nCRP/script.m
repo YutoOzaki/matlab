@@ -1,4 +1,6 @@
 %nCRP-LDA with variational inference
+%[2; 1; 0.5], ones(V, 1) ./ V, gma = 2, numepoch = 100 -> -7.076100e+06
+
 function script
     %% load data
     nyt_data = 'C:\Users\yuto\Documents\MATLAB\data\topicmodel\NewYorkTimesNews\nyt_data.txt';
@@ -10,7 +12,7 @@ function script
     assert(size(x, 1) == V, 'dimension of data and vocabulary is not agreed');
     
     %% set hyperparameters
-    numepoch = 100;
+    numepoch = 200;
     T = [1, 20, 10];
     L = length(T);
     assert(T(1) == 1, 'number of the root node should be one');
@@ -21,7 +23,7 @@ function script
     end
     numnode = sum(children);
     
-    alp = [2; 1; 0.5];
+    alp = [1; 1; 1];
     bta = ones(V, 1) ./ V;
     gma = 2;
     
@@ -73,8 +75,6 @@ function script
     
     %% variational inference
     %ELBO = zeros(numepoch, 1);
-    c_l = zeros(1, L);
-    c_l(1) = 1;
     logv_mean = zeros(2, numnode);
     fullpathidx = sum(children(1:(L - 1))) + 1:numnode;
     endstick_flip = 1 - endstick;
@@ -82,11 +82,6 @@ function script
     numsamp = 100;
     y = zeros(numsamp, V);
     dist = zeros(numsamp, 1);
-    if V > 9
-        numwrd = 10;
-    else
-        numwrd = V;
-    end
     I = sum(children(1:(L-1)));
     
     figure(1); plot(sum(x, 2)); title('histogram of words in the corpora'); drawnow;
@@ -133,7 +128,7 @@ function script
         % update for variational parameters of phi
         tic;
         fprintf(' update for variational parameters of phi...');
-        parfor i=1:numnode
+        for i=1:numnode
             buf = 0;
             l = L - length(find(c(i, :) == 0));
 
@@ -302,7 +297,6 @@ function script
         fprintf(' update for variational parameters of z (%d data)...', N);
         z_prmcell = cell(N, 1);
         parfor n=1:N
-            c_l = c(1, :);
             z_prmtmp = zeros(V, L);
             
             % l = 1, root node
@@ -313,7 +307,8 @@ function script
                 buf = 0;
                 
                 for i=fullpathidx
-                    c_l(l) = c(i, l);
+                    c_l = c(i, :);
+                    c_l(l+1:L) = 0;
                     [~, ~, ib] = intersect(c_l, c, 'rows');
 
                     buf = buf + c_prm(i, n) .* logphi_mean(:, ib);
@@ -327,7 +322,7 @@ function script
             for i=fullpathidx
                 buf = buf + c_prm(i, n) .* logphi_mean(:, i);
             end
-            z_prmtmp(:, L) = x(:, n) .* (buf + logtheta_mean(L, n)) - 1;
+            z_prmtmp(:, L) = x(:, n) .* (logtheta_mean(L, n) + buf) - 1;
             
             z_prmcell{n} = z_prmtmp;
         end
@@ -403,18 +398,25 @@ function script
         subplot(6, 1, 1); plot(x(:, n)); title(sprintf('n = %d (%d words)', n, sum(x(:,n))));
             
         parfor k=1:numsamp
-            for v=1:length(v_idx)
+            i = find(mnrnd(1, c_prm(fullpathidx, n))) + I;
+            
+            phi_mean = zeros(V, L);
+            phi_mean(:, 1) = phi_prm(:, 1) ./ repmat(sum(phi_prm(:, 1)), V, 1);
+            c_l = c(1, :);
+            for l=2:(L-1)
+                c_l(l) = c(i, l);
+                [~, ~, ib] = intersect(c_l, c, 'rows');
+                
+                phi_mean(:, l) = phi_prm(:, ib) ./ repmat(sum(phi_prm(:, ib)), V, 1);
+            end
+            phi_mean(:, L) = phi_prm(:, i) ./ repmat(sum(phi_prm(:, i)), V, 1);
+            
+            for v=1:numel(v_idx)
                 w = v_idx(v);
                 
                 for j=1:x(w, n)
-                    c_l = c(1, :);
-                    
-                    l = find(mnrnd(1, z_prm(w, :, n)));
-                    i = find(mnrnd(1, c_prm(fullpathidx, n)));
-                    c_l(1:l) = c(I + i, 1:l);
-                    [~, ~, ib] = intersect(c_l, c, 'rows');
-                    phi = dirichletrnd(phi_prm(:, ib));
-                    y(k, :) = y(k, :) + mnrnd(1, phi);
+                    l = mnrnd(1, z_prm(w, :, n));
+                    y(k, :) = y(k, :) + mnrnd(1, phi_mean(:, l));
                 end
             end
             
@@ -469,7 +471,7 @@ function script
                     figure(4); subplot(1,2,1); plot([a(childidx) a(parentidx)], [b(childidx) b(parentidx)],...
                         'LineWidth', 0.3, 'Color', lcolor); hold on;
 
-                    [~, widx] = sort(phi_prm(childidx, :), 'descend');
+                    [~, widx] = sort(phi_prm(:, childidx), 'descend');
                     topNwrd = sprintf('%d (%2.1f%%)', childidx, 100*mainpath(childidx));
                     for j=1:8
                         topNwrd = strjoin({topNwrd, vocab{widx(j)}}, '\n');
@@ -908,7 +910,7 @@ end
 
 function [x, vocab] = minidata
     vocab = {'a','b','c'};
-    x = [0 2 0 0 0 2;0 1 0 2 2 0;1 0 1 0 0 2];
+    x = [0 2 1 0 0 2;0 1 0 2 2 0;1 0 1 0 1 2];
 end
 
 function [x, vocab] = loaddata(datapath, vocabpath)
@@ -922,7 +924,7 @@ function [x, vocab] = loaddata(datapath, vocabpath)
     fclose(fileID);
     vocab = vocab{1};
     
-    N = length(data);
+    N = length(data);N=1000;
     V = length(vocab);
     x = zeros(V, N);
     fprintf('formatting data (%d documents)...', N);
