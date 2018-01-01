@@ -89,7 +89,7 @@ function script
     end
     I = sum(children(1:(L-1)));
     
-    figure(1); plot(sum(x, 2)); title('histogram of words in the corpora');
+    figure(1); plot(sum(x, 2)); title('histogram of words in the corpora'); drawnow;
     
     for epoch=1:numepoch
         fprintf('epoch %d [%s]\n', epoch, datetime);
@@ -113,7 +113,7 @@ function script
         logv_mean(1, :) = endstick_flip' .* (psi(v_prm(1, :)) - tmp);
         logv_mean(2, :) = endstick_flip' .* (psi(v_prm(2, :)) - tmp);
         
-        %checkzerograd_v(gma, v_prm, endstick_flip, fullpathidx, c, c_prm, 1e-6, 5, 2);
+        %checkzerograd_v(gma, v_prm, endstick_flip, fullpathidx, c, c_prm, 1e-5, 5, 2);
         
         % update for variational parameters of theta
         tic;
@@ -133,31 +133,30 @@ function script
         % update for variational parameters of phi
         tic;
         fprintf(' update for variational parameters of phi...');
-        i = 1;
-        for l=1:L
-            for j=1:children(l)
-                buf = 0;
-                
-                for n=1:N
-                    buf = buf + c_prm(i, n) .* z_prm(:, l, n) .* x(:, n);
-                end
-                
-                phi_prm(:, i) = bta + buf;
-                i = i + 1;
+        parfor i=1:numnode
+            buf = 0;
+            l = L - length(find(c(i, :) == 0));
+
+            for n=1:N
+                buf = buf + c_prm(i, n) .* z_prm(:, l, n) .* x(:, n);
             end
+
+            phi_prm(:, i) = bta + buf;
         end
         t = toc;
         fprintf('completed (%3.3f sec)\n', t);
         
         logphi_mean = psi(phi_prm) - repmat(psi(sum(phi_prm, 1)), V, 1);
         
-        %checkzerograd_phi(z_prm, c_prm, phi_prm, x, c, bta, fullpathidx, 1e-6, 4, 2);
+        %checkzerograd_phi(z_prm, c_prm, phi_prm, x, c, bta, fullpathidx, 1e-5, 4, 2);
         
         % update for variational parameters of c
         tic;
         fprintf(' update for variational parameters of c (%d data)...', N);
-        tmp = zeros(V, L);
-        for n=1:N
+        parfor n=1:N
+            tmp = zeros(V, L);
+            c_prmtmp = zeros(numnode, 1);
+            
             % l = 1, root node
             buf_n = sum(z_prm(:, 1, n) .* x(:, n) .* logphi_mean(:, 1));
                 
@@ -168,7 +167,7 @@ function script
             % the probability choosing root node (i = 1) is always 1 so it can be skipped
             for i=fullpathidx
                 buf = buf_n;
-                c_l(2:L) = 0;
+                c_l = c(1, :);
                 
                 % L > l > 1
                 for l=2:(L-1)
@@ -193,10 +192,12 @@ function script
 
                 buf = buf + sum(tmp(:, L) .* logphi_mean(:, i));
                 
-                c_prm(i, n) = buf - 1;
+                c_prmtmp(i) = buf - 1;
             end
-
+            
+            c_prm(:, n) = c_prmtmp;
         end
+        c_prm(1, :) = 1;
         t = toc;
         fprintf('completed (%3.3f sec)\n', t);
         
@@ -299,12 +300,13 @@ function script
         % update for variational parameters of z
         tic;
         fprintf(' update for variational parameters of z (%d data)...', N);
-        for n=1:N
-            fprintf('%d', n);
-            c_l(2:L) = 0;
+        z_prmcell = cell(N, 1);
+        parfor n=1:N
+            c_l = c(1, :);
+            z_prmtmp = zeros(V, L);
             
             % l = 1, root node
-            z_prm(:, 1, n) = x(:, n) .* (logtheta_mean(1, n) + logphi_mean(:, 1)) - 1;
+            z_prmtmp(:, 1) = x(:, n) .* (logtheta_mean(1, n) + logphi_mean(:, 1)) - 1;
             
             % L > l > 1
             for l=2:(L-1)
@@ -317,7 +319,7 @@ function script
                     buf = buf + c_prm(i, n) .* logphi_mean(:, ib);
                 end
 
-                z_prm(:, l, n) = x(:, n) .* (logtheta_mean(l, n) + buf) - 1;
+                z_prmtmp(:, l) = x(:, n) .* (logtheta_mean(l, n) + buf) - 1;
             end
             
             % l = L, full path
@@ -325,10 +327,15 @@ function script
             for i=fullpathidx
                 buf = buf + c_prm(i, n) .* logphi_mean(:, i);
             end
-            z_prm(:, L, n) = x(:, n) .* (buf + logtheta_mean(L, n)) - 1;
+            z_prmtmp(:, L) = x(:, n) .* (buf + logtheta_mean(L, n)) - 1;
             
-            fprintf(repmat('\b', [1, length(num2str(n))]));
+            z_prmcell{n} = z_prmtmp;
         end
+        
+        parfor n=1:N
+            z_prm(:, :, n) = z_prmcell{n};
+        end
+        
         t = toc;
         fprintf('completed (%3.3f sec)\n', t);
 
@@ -350,12 +357,11 @@ function script
         phi_mean = phi_prm ./ repmat(sum(phi_prm), V, 1);
         theta_mean = theta_prm ./ repmat(sum(theta_prm), L, 1);
         
-        for n=1:N
-            fprintf('%d', n);
+        parfor n=1:N
             buf = 0;
             
             for i=fullpathidx
-                c_l(2:L) = 0;
+                c_l = c(1, :);
                 
                 % l = 1, root node
                 tmp = theta_mean(1, n) .* phi_mean(:, 1) .* x(:, n);
@@ -376,7 +382,6 @@ function script
             
             hotidx = buf > 0;
             perplexity(n + 1, epoch) = sum(log(buf(hotidx)));
-            fprintf(repmat('\b', [1, length(num2str(n))]));
         end
         
         perplexity(1, epoch) = sum(perplexity(2:end, epoch));
@@ -397,17 +402,17 @@ function script
         figure(3);
         subplot(6, 1, 1); plot(x(:, n)); title(sprintf('n = %d (%d words)', n, sum(x(:,n))));
             
-        for k=1:numsamp
+        parfor k=1:numsamp
             for v=1:length(v_idx)
                 w = v_idx(v);
                 
                 for j=1:x(w, n)
-                    c_i(:) = 0;
+                    c_l = c(1, :);
                     
                     l = find(mnrnd(1, z_prm(w, :, n)));
                     i = find(mnrnd(1, c_prm(fullpathidx, n)));
-                    c_i(1:l) = c(I + i, 1:l);
-                    [~, ~, ib] = intersect(c_i, c, 'rows');
+                    c_l(1:l) = c(I + i, 1:l);
+                    [~, ~, ib] = intersect(c_l, c, 'rows');
                     phi = dirichletrnd(phi_prm(:, ib));
                     y(k, :) = y(k, :) + mnrnd(1, phi);
                 end
@@ -440,6 +445,8 @@ function script
         end
         
         mainpath = sum(c_prm, 2) ./ N;
+        idx = mainpath < 0;
+        mainpath(idx) = eps;
         [a, b] = treelayout(treevec);
         figure(4); clf(4);
         figure(4); subplot(1,2,1); scatter(a, b, 300 .* mainpath); axis([0 1 0.1 0.9]); hold on;
@@ -486,6 +493,7 @@ function script
         end
         figure(4); subplot(1,2,1); text(a(1), b(1) + 0.01, num2str(childidx)); hold off;
         figure(4); subplot(1,2,2); text(textx(1), b(1), topNwrd); axis([0 1 0.1 0.9]);
+        drawnow;
     end
 end
 
@@ -919,17 +927,16 @@ function [x, vocab] = loaddata(datapath, vocabpath)
     x = zeros(V, N);
     fprintf('formatting data (%d documents)...', N);
     
-    for n=1:N
-        fprintf('%d', n);
-        
+    parfor n=1:N
         str = strsplit(data{n}, ',');
         A = cell2mat(cellfun(@(s) str2double(strsplit(s, ':'))', str, 'UniformOutput', false))';
         
         assert(size(A, 1) == length(unique(A(:, 1))), 'bag of words with duplicated elements!');
         
-        x(A(:, 1), n) = A(:, 2);
+        tmp = zeros(V, 1);
+        tmp(A(:, 1)) = A(:, 2);
         
-        fprintf(repmat('\b', [1, length(num2str(n))]));
+        x(:, n) = tmp;
     end
     
     fprintf('completed\n');
