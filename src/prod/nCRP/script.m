@@ -3,10 +3,9 @@
 
 function script
     %% load data
-    nyt_data = 'C:\Users\yuto\Documents\MATLAB\data\topicmodel\NewYorkTimesNews\nyt_data.txt';
-    nyt_vocab = 'C:\Users\yuto\Documents\MATLAB\data\topicmodel\NewYorkTimesNews\nyt_vocab.dat';
-    [x, vocab] = loaddata(nyt_data, nyt_vocab);
-    %[x, vocab] = minidata;
+    %[x, vocab] = loadNIPSdata;
+    [x, vocab] = loadNYTdata;
+    %[x, vocab] = loadminidata;
     N = size(x, 2);
     V = length(vocab);
     assert(size(x, 1) == V, 'dimension of data and vocabulary is not agreed');
@@ -24,8 +23,8 @@ function script
     numnode = sum(children);
     
     alp = [2; 1; 0.5];
-    bta = 10 .* ones(V, 1) ./ V;
-    gma = 3;
+    bta = 1e-3 .* ones(V, 1);
+    gma = 5;
     
     %% define paths
     [c, endstick] = treeidx(T, children);
@@ -911,42 +910,6 @@ function checkzerograd_v(gma, v_prm, endstick_flip, fullpathidx, c, c_prm, eps, 
         delta = (ELBO(1) - ELBO(2))/(2*h(1));
         fprintf('%e: numerical gradient of %s(%d, %d) = %e [%3.3f sec]\n', delta, prmname, prmidx, dstidx, val, t);
     end
-end
-
-function [x, vocab] = minidata
-    vocab = {'a','b','c'};
-    x = [0 2 1 0 0 2;0 1 0 2 2 0;1 0 1 0 1 2];
-end
-
-function [x, vocab] = loaddata(datapath, vocabpath)
-    fileID = fopen(datapath, 'r');
-    data = textscan(fileID, '%s');
-    fclose(fileID);
-    data = data{1};
-    
-    fileID = fopen(vocabpath, 'r');
-    vocab = textscan(fileID, '%s');
-    fclose(fileID);
-    vocab = vocab{1};
-    
-    N = length(data);N=1000;
-    V = length(vocab);
-    x = zeros(V, N);
-    fprintf('formatting data (%d documents)...', N);
-    
-    parfor n=1:N
-        str = strsplit(data{n}, ',');
-        A = cell2mat(cellfun(@(s) str2double(strsplit(s, ':'))', str, 'UniformOutput', false))';
-        
-        assert(size(A, 1) == length(unique(A(:, 1))), 'bag of words with duplicated elements!');
-        
-        tmp = zeros(V, 1);
-        tmp(A(:, 1)) = A(:, 2);
-        
-        x(:, n) = tmp;
-    end
-    
-    fprintf('completed\n');
 end
 
 function [c, endstick] = treeidx(T, children)
