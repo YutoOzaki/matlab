@@ -18,7 +18,8 @@ classdef lossfunc < basenode
             zmu = input.zmu;
             zsig = input.zsig;
             gam = input.gam;
-            eta= input.eta;
+            eta_mu = input.eta_mu;
+            eta_sig = input.eta_sig;
             PI = input.PI;
     
             [~, batchsize] = size(x);
@@ -33,10 +34,10 @@ classdef lossfunc < basenode
 
             buf = 0;
             for k=1:K
-                A = bsxfun(@minus, zmu, eta(k).mu).^2;
-                B = bsxfun(@rdivide, A, eta(k).sig);
-                C = bsxfun(@rdivide, zsig, eta(k).sig) + B;
-                D = bsxfun(@plus, log(2*pi.*eta(k).sig), C);
+                A = bsxfun(@minus, zmu, eta_mu(:, k)).^2;
+                B = bsxfun(@rdivide, A, eta_sig(:, k));
+                C = bsxfun(@rdivide, zsig, eta_sig(:, k)) + B;
+                D = bsxfun(@plus, log(2*pi.*eta_sig(:, k)), C);
 
                 buf = buf + gam(k, :).*sum(D);
             end
@@ -53,9 +54,12 @@ classdef lossfunc < basenode
         end
         
         function delta = backwardprop(obj, input)
+            J = size(obj.input.zmu, 1);
             K = length(obj.input.PI);
             [~, batchsize] = size(obj.input.x);
-            eta = obj.input.eta;
+            
+            eta_mu = obj.input.eta_mu;
+            eta_sig = obj.input.eta_sig;
             gam = obj.input.gam;
             zmu = obj.input.zmu;
             zsig = obj.input.zsig;
@@ -67,19 +71,36 @@ classdef lossfunc < basenode
                 idx = buf == Inf;
                 buf(idx) = log(PI(k)/1e-5);
                 
-                A = bsxfun(@minus, zmu, eta(k).mu).^2;
-                B = bsxfun(@rdivide, A, eta(k).sig);
-                C = bsxfun(@rdivide, zsig, eta(k).sig) + B;
-                D = bsxfun(@plus, log(2*pi.*eta(k).sig), C);
+                A = bsxfun(@minus, zmu, eta_mu(:, k)).^2;
+                B = bsxfun(@rdivide, A, eta_sig(:, k));
+                C = bsxfun(@rdivide, zsig, eta_sig(:, k)) + B;
+                D = bsxfun(@plus, log(2*pi.*eta_sig(:, k)), C);
                 
                 dgam(k, :) = -0.5.*sum(D) + buf - 1;
             end
             
             dPI = bsxfun(@rdivide, gam, PI);
             
+            deta_mu = zeros(J, K, batchsize);
+            deta_sig = zeros(J, K, batchsize);
+            for k=1:K
+                A = 2.*bsxfun(@plus, -zmu, eta_mu(:, k));
+                B = bsxfun(@rdivide, A, eta_sig(:, k));
+                deta_mu(:, k, :) = -0.5 .* bsxfun(@times, B, gam(k, :));
+                
+                A = bsxfun(@minus, zmu, eta_mu(:, k)).^2;
+                B = bsxfun(@rdivide, A, eta_sig(:, k).^2);
+                C = bsxfun(@rdivide, zsig, eta_sig(:, k).^2);
+                D = bsxfun(@minus, 1./eta_sig(:, k), B + C);
+                
+                deta_sig(:, k, :) = -0.5 .* bsxfun(@times, D, gam(k, :));
+            end
+            
             delta = struct(...
                 'gam', dgam,...
-                'PI', dPI...
+                'PI', dPI,...
+                'eta_mu', deta_mu,...
+                'eta_sig', deta_sig...
                 );
             
             obj.delta = delta;
@@ -101,10 +122,11 @@ classdef lossfunc < basenode
             input = obj.input;
             names = fieldnames(input);
             batchsize = size(obj.input.x, 2);
-            names = {'gam', 'PI'};
+            names = {'eta_mu', 'eta_sig', 'gam', 'PI'};
             
             for i=1:length(names)
                 prm = input.(names{i});
+                
                 lx = size(prm, 1);
                 ly = size(prm, 2);
 
@@ -115,18 +137,22 @@ classdef lossfunc < basenode
                 prm(ix, iy) = val + eps;
                 input.(names{i}) = prm;
                 f(1) = obj.forwardprop(input);
+                
                 prm(ix, iy) = val - eps;
                 input.(names{i}) = prm;
                 f(2) = obj.forwardprop(input);
+                
                 prm(ix, iy) = val;
                 input.(names{i}) = prm;
 
                 d(1) = (f(1) - f(2))./(2*eps);
                 
-                if strcmp(names{i}, 'gam')
-                    d(2) = obj.delta.(names{i})(ix, iy)./batchsize;
-                elseif strcmp(names{i}, 'PI')
+                if strcmp(names{i}, 'PI')
                     d(2) = sum(obj.delta.(names{i})(ix, :))./batchsize;
+                elseif strcmp(names{i}, 'gam')
+                    d(2) = obj.delta.(names{i})(ix, iy)./batchsize;
+                elseif strcmp(names{i}, 'eta_mu') || strcmp(names{i}, 'eta_sig')
+                    d(2) = sum(obj.delta.(names{i})(ix, iy, :))./batchsize;
                 end
                 
                 re = abs(d(1) - d(2))./max(abs(d(1)), abs(d(2)));

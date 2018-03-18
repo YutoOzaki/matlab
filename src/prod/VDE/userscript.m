@@ -6,17 +6,18 @@ function userscript
     data = testdata(N, D, numclass);
     
     %% define model
-    J = 10;
+    J = 13;
     numnode = [D; 30; J; 20; D];
     
     K = 10;
     PI = rand(K, 1);
     PI = PI./sum(PI);
     
-    eta = struct();
+    eta_mu = zeros(J, K);
+    eta_sig = zeros(J, K);
     for k=1:K
-        eta(k).mu = mvnrnd(zeros(1, J), diag(3.*ones(J, 1)), 1)';
-        eta(k).sig = mvnrnd(zeros(1, J), diag(ones(J, 1)), 1).^2';
+        eta_mu(:, k) = mvnrnd(zeros(1, J), diag(3.*ones(J, 1)), 1)';
+        eta_sig(:, k) = mvnrnd(zeros(1, J), diag(ones(J, 1)), 1).^2';
     end
     
     L = 2;
@@ -40,7 +41,7 @@ function userscript
     
     priornet = struct(...
         'reparam', reparamtrans(numnode(3), 1),...
-        'weight', mogtrans(eta, PI)...
+        'weight', mogtrans(eta_mu, eta_sig, PI)...
         );
     
     lossnode = lossfunc();
