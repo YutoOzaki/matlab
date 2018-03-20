@@ -1,6 +1,6 @@
 classdef mogtrans < basenode
     properties
-        input, prms, delta
+        input, prms, grad
     end
     
     methods
@@ -94,13 +94,13 @@ classdef mogtrans < basenode
             geta_mu = geta_mu./batchsize;
             geta_sig = geta_sig./batchsize;
             
-            delta = struct(...
+            obj.grad = struct(...
                 'PI', gPI,...
                 'eta_mu', geta_mu,...
                 'eta_sig', geta_sig...
                 );
             
-            obj.delta = delta;
+            delta = 0;
         end
         
         function init(obj)

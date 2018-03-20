@@ -3,38 +3,50 @@ function gradcheck(x, encnet, decnet, priornet, lossnode)
     f = zeros(2, 1);
     d = zeros(2, 1);
 
-    names = fieldnames(priornet);
-    names = {'weight'};
+    nets = struct('enc', encnet, 'dec', decnet, 'prior', priornet);  
+    netnames = fieldnames(nets);
+    netnames = {'dec', 'prior'};
+    L = length(netnames);
     
-    for i=1:length(names)
-        prms = priornet.(names{i}).prms;
-        prmnames = fieldnames(prms);
-        
-        for j=1:length(prmnames)
-            prm = prms.(prmnames{j});
-            
-            m = size(prm, 1);
-            n = size(prm, 2);
-            a = randi(m);
-            b = randi(n);
-            val = prm(a, b);
-            
-            prm(a, b) = val + eps;
-            priornet.(names{i}).prms.(prmnames{j}) = prm;
-            f(1) = fprop(x, encnet, decnet, priornet, lossnode);
+    for l=1:L
+        names = fieldnames(nets.(netnames{l}));
 
-            prm(a, b) = val - eps;
-            priornet.(names{i}).prms.(prmnames{j}) = prm;
-            f(2) = fprop(x, encnet, decnet, priornet, lossnode);
+        for i=1:length(names)
+            prms = nets.(netnames{l}).(names{i}).prms;
+            
+            if isempty(prms)
+                J = 0;
+            else
+                prmnames = fieldnames(prms);
+                J = length(prmnames);
+            end
 
-            d(1) = (f(1) - f(2))/(2*eps);
-            d(2) = priornet.(names{i}).delta.(prmnames{j})(a, b);
-            
-            re = abs(d(1) - d(2))/max(abs(d(1)), abs(d(2)));
-            fprintf('%s, %e, %e, %e, %e\n', prmnames{j}, val, d(1), d(2), re);
-            
-            prm(a, b) = val;
-            priornet.(names{i}).prms.(prmnames{j}) = prm;
+            for j=1:J
+                prm = prms.(prmnames{j});
+
+                m = size(prm, 1);
+                n = size(prm, 2);
+                a = randi(m);
+                b = randi(n);
+                val = prm(a, b);
+
+                prm(a, b) = val + eps;
+                nets.(netnames{l}).(names{i}).prms.(prmnames{j}) = prm;
+                f(1) = fprop(x, encnet, decnet, priornet, lossnode);
+
+                prm(a, b) = val - eps;
+                nets.(netnames{l}).(names{i}).prms.(prmnames{j}) = prm;
+                f(2) = fprop(x, encnet, decnet, priornet, lossnode);
+
+                d(1) = (f(1) - f(2))/(2*eps);
+                d(2) = nets.(netnames{l}).(names{i}).grad.(prmnames{j})(a, b);
+
+                re = abs(d(1) - d(2))/max(abs(d(1)), abs(d(2)));
+                fprintf('%s.%s.%s, %e, %e, %e, %e\n', netnames{l}, names{i}, prmnames{j}, val, d(1), d(2), re);
+
+                prm(a, b) = val;
+                nets.(netnames{l}).(names{i}).prms.(prmnames{j}) = prm;
+            end
         end
     end
 end

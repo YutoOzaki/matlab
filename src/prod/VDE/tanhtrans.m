@@ -1,6 +1,6 @@
 classdef tanhtrans < basenode
     properties
-        input, prms, delta
+        input, prms, grad
     end
     
     methods
@@ -14,6 +14,7 @@ classdef tanhtrans < basenode
         end
         
         function delta = backwardprop(obj, input)
+            delta = input.*(1 - tanh(obj.input).^2);
         end
         
         function init(obj)

@@ -1,6 +1,6 @@
 classdef lineartrans < basenode
     properties
-        input, prms, delta
+        input, prms, grad
     end
     
     methods
@@ -18,6 +18,17 @@ classdef lineartrans < basenode
         end
         
         function delta = backwardprop(obj, input)
+            batchsize = size(obj.input, 2);
+            
+            gb = sum(input, 2)./batchsize;
+            gW = obj.input * input'./batchsize;
+            
+            obj.grad = struct(...
+                'b', gb,...
+                'W', gW'...
+                );
+            
+            delta = obj.prms.W' * input;
         end
         
         function init(obj)

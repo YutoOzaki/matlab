@@ -1,24 +1,22 @@
 classdef reparamtrans < basenode
     properties
-        input, prms, delta
+        input, prms, grad
+        eps, J, L
     end
     
     methods
         function obj = reparamtrans(J, L)
-            obj.prms = struct(...
-                'eps', [],...
-                'J', J,...
-                'L', L...
-                );
+            obj.J = J;
+            obj.L = L;
         end
         
         function output = forwardprop(obj, input)
             obj.input = input;
             
             [~, batchsize] = size(input.mu);
-            output = zeros(obj.prms.J, batchsize, obj.prms.L);
-            for l=1:(obj.prms.L)
-                output(:, :, l) = input.mu + bsxfun(@times, sqrt(input.sig), obj.prms.eps(:, l));
+            output = zeros(obj.J, batchsize, obj.L);
+            for l=1:(obj.L)
+                output(:, :, l) = input.mu + bsxfun(@times, sqrt(input.sig), obj.eps(:, l));
             end
         end
         
@@ -26,8 +24,7 @@ classdef reparamtrans < basenode
         end
         
         function init(obj)
-            obj.prms.eps = mvnrnd(zeros(1, obj.prms.J), diag(ones(obj.prms.J, 1)), obj.prms.L)';
-            
+            obj.eps = mvnrnd(zeros(1, obj.J), diag(ones(obj.J, 1)), obj.L)';
         end
         
         function update(obj)

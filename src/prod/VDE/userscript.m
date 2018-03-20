@@ -1,7 +1,7 @@
 function userscript
     %% define data
     N = 500;
-    D = 2;
+    D = 3;
     numclass = 10;
     data = testdata(N, D, numclass);
     
@@ -44,7 +44,7 @@ function userscript
         'weight', mogtrans(eta_mu, eta_sig, PI)...
         );
     
-    lossnode = lossfunc();
+    lossnode = lossfun();
     
     names = fieldnames(encnet);
     for i=1:length(names)

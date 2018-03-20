@@ -1,6 +1,6 @@
 classdef exptrans < basenode
     properties
-        input, prms, delta
+        input, prms, grad
     end
     
     methods
@@ -14,6 +14,7 @@ classdef exptrans < basenode
         end
         
         function delta = backwardprop(obj, input)
+            delta = input.*exp(obj.input);
         end
         
         function init(obj)
