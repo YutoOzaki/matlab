@@ -18,9 +18,6 @@ classdef mogtrans < basenode
                 output(k, :) = obj.prms.PI(k) .* mvnpdf(input', obj.prms.eta_mu(:, k)', diag(obj.prms.eta_sig(:, k)));
             end
             output = bsxfun(@rdivide, output, sum(output));
-            
-            idx = abs(output) < 1e-5;
-            output(idx) = 1e-5;
         end
         
         function delta = backwardprop(obj, input)
@@ -44,7 +41,15 @@ classdef mogtrans < basenode
             dgamdPI = zeros(K, K, batchsize);
             dgamdeta_mu = zeros(K, K, J, batchsize);
             dgamdeta_sig = zeros(K, K, J, batchsize);
-            normalization = sum(bsxfun(@times, PI, z_kpdf)).^2;
+            dgamdz = zeros(K, J, batchsize);
+            I = sum(bsxfun(@times, PI, z_kpdf));
+            M = bsxfun(@minus, reshape(obj.input, [J,1,batchsize]), eta_mu);
+            N = bsxfun(@rdivide, M, eta_sig);
+            O = bsxfun(@times, reshape(-PI, [1,K,1]), N);
+            P = bsxfun(@times, reshape(z_kpdf, [1,K,batchsize]), O);
+            Q = squeeze(sum(P, 2));
+            normalization = I.^2;
+            
             for i=1:K
                 idx = setdiff(1:K, i);
                 buf = sum(bsxfun(@times, PI(idx), z_kpdf(idx, :)));
@@ -65,6 +70,9 @@ classdef mogtrans < basenode
                 
                 dgamdeta_sig(i, i, :, :) = bsxfun(@times, PI(i).*buf, H);
                 
+                R = bsxfun(@times, -PI(i).*C, I) - bsxfun(@times, PI(i).*z_kpdf(i, :), Q);
+                dgamdz(i, :, :) = bsxfun(@rdivide, R, normalization);
+                
                 for k=1:(K-1)
                     buf = -PI(idx(k)).*z_kpdf(idx(k), :);
                     
@@ -77,11 +85,15 @@ classdef mogtrans < basenode
             gPI = zeros(K, 1);
             geta_mu = zeros(J, K);
             geta_sig = zeros(J, K);
+            delta = zeros(J, batchsize);
             for n=1:batchsize
                 gPI = gPI + dLdPI(:, n) + (dLdgam(:, n)' * dgamdPI(:, :, n))';
                 
                 geta_mu = geta_mu + dLdeta_mu(:, :, n);
                 geta_sig = geta_sig + dLdeta_sig(:, :, n);
+                
+                delta(:, n) = (dLdgam(:, n)' * dgamdz(:, :, n))';
+                
                 for k=1:K
                     buf = squeeze(dgamdeta_mu(:, k, :, n));
                     geta_mu(:, k) = geta_mu(:, k) + (dLdgam(:, n)' * buf)';
@@ -90,6 +102,7 @@ classdef mogtrans < basenode
                     geta_sig(:, k) = geta_sig(:, k) + (dLdgam(:, n)' * buf)';
                 end
             end
+            
             gPI = gPI./batchsize;
             geta_mu = geta_mu./batchsize;
             geta_sig = geta_sig./batchsize;
@@ -99,8 +112,6 @@ classdef mogtrans < basenode
                 'eta_mu', geta_mu,...
                 'eta_sig', geta_sig...
                 );
-            
-            delta = 0;
         end
         
         function init(obj)

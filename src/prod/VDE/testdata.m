@@ -2,15 +2,17 @@ function data = testdata(N, D, K)
     N_d = numperclass(N, K);
     data = zeros(D, N);
     
-    prior = @() mvnrnd(zeros(1, D), 2.*diag(ones(D, 1)), 1);
     idx = zeros(2, 1);
+    m = zeros(D, 1);
+    lmd = 1e-2;
+    mu = D + 1;
     
     for k=1:K
         idx(1) = idx(2) + 1;
         idx(2) = idx(1) + N_d(k) - 1;
-        MU = prior();
-        SIGMA = prior();
-        data(:, idx(1):idx(2)) = mvnrnd(MU, diag(SIGMA.^2), N_d(k))';
+        SIGMA = wishrnd(diag(ones(D, 1)), mu);
+        MU = mvnrnd(m, inv(lmd.*SIGMA));
+        data(:, idx(1):idx(2)) = mvnrnd(MU, inv(SIGMA), N_d(k))';
     end
 end
 

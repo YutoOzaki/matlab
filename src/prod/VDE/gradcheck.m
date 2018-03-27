@@ -5,7 +5,6 @@ function gradcheck(x, encnet, decnet, priornet, lossnode)
 
     nets = struct('enc', encnet, 'dec', decnet, 'prior', priornet);  
     netnames = fieldnames(nets);
-    netnames = {'dec', 'prior'};
     L = length(netnames);
     
     for l=1:L
@@ -49,4 +48,6 @@ function gradcheck(x, encnet, decnet, priornet, lossnode)
             end
         end
     end
+    
+    fprintf('\n');
 end

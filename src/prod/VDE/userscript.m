@@ -2,14 +2,14 @@ function userscript
     %% define data
     N = 500;
     D = 3;
-    numclass = 10;
+    numclass = 4;
     data = testdata(N, D, numclass);
     
     %% define model
-    J = 13;
-    numnode = [D; 30; J; 20; D];
+    J = 2;
+    numnode = [D; 15; J; 11; D];
     
-    K = 10;
+    K = 4;
     PI = rand(K, 1);
     PI = PI./sum(PI);
     
@@ -20,7 +20,7 @@ function userscript
         eta_sig(:, k) = mvnrnd(zeros(1, J), diag(ones(J, 1)), 1).^2';
     end
     
-    L = 2;
+    L = 1;
     
     encnet = struct(...
         'connect', lineartrans(numnode(2), numnode(1)),...
@@ -79,10 +79,12 @@ function userscript
             x = data(:, rndidx(batchidx(1):batchidx(2)));
             
             % forward propagation
+            encnet.reparam.init();
+            priornet.reparam.init();
             loss(epoch) = loss(epoch) + fprop(x, encnet, decnet, priornet, lossnode);
             
             % backward propagation
-            bprop(x, encnet, decnet, priornet, lossnode);
+            bprop(encnet, decnet, priornet, lossnode);
             
             % gradient checking
             gradcheck(x, encnet, decnet, priornet, lossnode);

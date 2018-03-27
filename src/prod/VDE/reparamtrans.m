@@ -21,6 +21,19 @@ classdef reparamtrans < basenode
         end
         
         function delta = backwardprop(obj, input)
+            dzdmu = sum(input, 3);
+            
+            dzdsig = 0;
+            for l=1:obj.L
+                A = bsxfun(@times, input(:, :, l), obj.eps(:, l));
+                
+                dzdsig = dzdsig + 0.5.*A./sqrt(obj.input.sig);
+            end
+            
+            delta = struct(...
+                'mu', dzdmu,...
+                'sig', dzdsig...
+                );
         end
         
         function init(obj)
