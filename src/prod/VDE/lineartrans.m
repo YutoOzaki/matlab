@@ -1,14 +1,16 @@
 classdef lineartrans < basenode
     properties
-        input, prms, grad
+        input, prms, grad, optm
     end
     
     methods
-        function obj = lineartrans(J, D)
+        function obj = lineartrans(J, D, optm)
             obj.prms = struct(...
                 'W', zeros(J, D),...
                 'b', zeros(J, 1)...
             );
+            
+            obj.optm = optm;
         end
         
         function output = forwardprop(obj, input)
@@ -38,6 +40,11 @@ classdef lineartrans < basenode
         end
         
         function update(obj)
+            prmnames = fieldnames(obj.grad);
+            
+            for l=1:length(prmnames)
+                obj.prms.(prmnames{l}) = obj.prms.(prmnames{l}) + obj.optm.adjust(obj.grad.(prmnames{l}));
+            end
         end
     end
 end

@@ -1,11 +1,13 @@
 classdef mogtrans < basenode
     properties
-        input, prms, grad
+        input, prms, grad, optm
     end
     
     methods
-        function obj = mogtrans(eta_mu, eta_sig, PI)
-            obj.prms = struct('eta_mu', eta_mu, 'eta_sig', eta_sig, 'PI', PI);
+        function obj = mogtrans(eta_mu, eta_r, PI, optm)
+            obj.prms = struct('eta_mu', eta_mu, 'eta_r', eta_r, 'PI', PI);
+            
+            obj.optm = optm;
         end
         
         function output = forwardprop(obj, input)
@@ -13,9 +15,11 @@ classdef mogtrans < basenode
             K = length(obj.prms.PI);
             [~, batchsize] = size(input);
             
+            eta_sig = exp(obj.prms.eta_r);
+            
             output = zeros(K, batchsize);
             for k=1:K
-                output(k, :) = obj.prms.PI(k) .* mvnpdf(input', obj.prms.eta_mu(:, k)', diag(obj.prms.eta_sig(:, k)));
+                output(k, :) = obj.prms.PI(k) .* mvnpdf(input', obj.prms.eta_mu(:, k)', diag(eta_sig(:, k)));
             end
             output = bsxfun(@rdivide, output, sum(output));
         end
@@ -30,7 +34,7 @@ classdef mogtrans < basenode
             dLdeta_sig = input.eta_sig;
             
             eta_mu = obj.prms.eta_mu;
-            eta_sig = obj.prms.eta_sig;
+            eta_sig = exp(obj.prms.eta_r);
             PI = obj.prms.PI;
             
             z_kpdf = zeros(K, batchsize);
@@ -103,14 +107,16 @@ classdef mogtrans < basenode
                 end
             end
             
+            geta_r = geta_sig.*exp(obj.prms.eta_r);
+            
             gPI = gPI./batchsize;
             geta_mu = geta_mu./batchsize;
-            geta_sig = geta_sig./batchsize;
+            geta_r = geta_r./batchsize;
             
             obj.grad = struct(...
                 'PI', gPI,...
                 'eta_mu', geta_mu,...
-                'eta_sig', geta_sig...
+                'eta_r', geta_r...
                 );
         end
         
@@ -118,6 +124,11 @@ classdef mogtrans < basenode
         end
         
         function update(obj)
+            prmnames = fieldnames(obj.grad);
+            
+            for l=1:length(prmnames)
+                obj.prms.(prmnames{l}) = obj.prms.(prmnames{l}) + obj.optm.adjust(obj.grad.(prmnames{l}));
+            end
         end
     end
 end

@@ -1,6 +1,6 @@
 classdef reparamtrans < basenode
     properties
-        input, prms, grad
+        input, prms, grad, optm
         eps, J, L
     end
     

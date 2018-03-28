@@ -1,6 +1,6 @@
 classdef (Abstract) basenode < handle
     properties (Abstract)
-        input, prms, grad
+        input, prms, grad, optm
     end
     
     methods (Abstract)

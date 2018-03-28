@@ -1,11 +1,12 @@
 classdef tanhtrans < basenode
     properties
-        input, prms, grad
+        input, prms, grad, optm
     end
     
     methods
         function obj = tanhtrans()
             obj.prms = [];
+            obj.optm = [];
         end
         
         function output = forwardprop(obj, input)

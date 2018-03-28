@@ -1,11 +1,12 @@
 classdef lossfun < basenode
     properties
-        input, prms, grad
+        input, prms, grad, optm
     end
     
     methods
         function obj = lossfun()
             obj.prms = [];
+            obj.optm = [];
         end
         
         function output = forwardprop(obj, input)
@@ -68,12 +69,13 @@ classdef lossfun < basenode
             [~, ~, L] = size(xsig);
             K = length(PI);
             J = size(zmu, 1);
+            SAFEDIV = 1e-75; %11e-75 > 1e-90 > 1e-60 > 1e-30
             
             dgam = zeros(K, batchsize);
             for k=1:K
                 buf = log(bsxfun(@rdivide, PI(k), gam(k,:)));
                 idx = buf == Inf;
-                buf(idx) = log(PI(k)/1e-5);
+                buf(idx) = log(PI(k)/SAFEDIV);
                 
                 A = bsxfun(@minus, zmu, eta_mu(:, k)).^2;
                 B = bsxfun(@rdivide, A, eta_sig(:, k));
