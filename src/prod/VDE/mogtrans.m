@@ -4,28 +4,34 @@ classdef mogtrans < basenode
     end
     
     methods
-        function obj = mogtrans(eta_mu, eta_r, PI, optm)
-            obj.prms = struct('eta_mu', eta_mu, 'eta_r', eta_r, 'PI', PI);
+        function obj = mogtrans(eta_mu, eta_sig, p, optm)
+            obj.prms = struct('eta_mu', eta_mu, 'eta_sig', eta_sig, 'p', p);
             
+            optm.ms = obj.prms;
+            prmnames = fieldnames(obj.prms);
+            for l=1:length(prmnames)
+                optm.ms.(prmnames{l}) = obj.prms.(prmnames{l}) .* 0;
+            end
             obj.optm = optm;
         end
         
         function output = forwardprop(obj, input)
-            obj.input = input;
-            K = length(obj.prms.PI);
-            [~, batchsize] = size(input);
+            PI = softmax(obj.prms.p);
+            eta_sig = obj.prms.eta_sig.^2;
             
-            eta_sig = exp(obj.prms.eta_r);
+            obj.input = input;
+            K = length(PI);
+            [~, batchsize] = size(input);
             
             output = zeros(K, batchsize);
             for k=1:K
-                output(k, :) = obj.prms.PI(k) .* mvnpdf(input', obj.prms.eta_mu(:, k)', diag(eta_sig(:, k)));
+                output(k, :) = PI(k) .* mvnpdf(input', obj.prms.eta_mu(:, k)', diag(eta_sig(:, k)));
             end
             output = bsxfun(@rdivide, output, sum(output));
         end
         
         function delta = backwardprop(obj, input)
-            K = length(obj.prms.PI);
+            K = length(obj.prms.p);
             [J, batchsize] = size(obj.input);
             
             dLdgam = input.gam;
@@ -34,8 +40,8 @@ classdef mogtrans < basenode
             dLdeta_sig = input.eta_sig;
             
             eta_mu = obj.prms.eta_mu;
-            eta_sig = exp(obj.prms.eta_r);
-            PI = obj.prms.PI;
+            eta_sig = obj.prms.eta_sig.^2;
+            PI = softmax(obj.prms.p);
             
             z_kpdf = zeros(K, batchsize);
             for k=1:K
@@ -107,16 +113,29 @@ classdef mogtrans < basenode
                 end
             end
             
-            geta_r = geta_sig.*exp(obj.prms.eta_r);
+            geta_sig = geta_sig.*(2.*obj.prms.eta_sig);
             
-            gPI = gPI./batchsize;
+            dPIdp = zeros(K, K);
+            for i=1:K
+                j = i;
+                idx = setdiff(1:K, i);
+                dPIdp(i, j) = exp(obj.prms.p(i))*sum(exp(obj.prms.p(idx)));
+                
+                for j=1:(K-1)
+                    dPIdp(i, idx(j)) = -exp(obj.prms.p(i) + obj.prms.p(idx(j)));
+                end
+            end
+            dPIdp = dPIdp./sum(exp(obj.prms.p))^2;
+            gp = (gPI'*dPIdp)';
+            
+            gp = gp./batchsize;
             geta_mu = geta_mu./batchsize;
-            geta_r = geta_r./batchsize;
+            geta_sig = geta_sig./batchsize;
             
             obj.grad = struct(...
-                'PI', gPI,...
+                'p', gp,...
                 'eta_mu', geta_mu,...
-                'eta_r', geta_r...
+                'eta_sig', geta_sig...
                 );
         end
         
@@ -127,8 +146,10 @@ classdef mogtrans < basenode
             prmnames = fieldnames(obj.grad);
             
             for l=1:length(prmnames)
-                obj.prms.(prmnames{l}) = obj.prms.(prmnames{l}) + obj.optm.adjust(obj.grad.(prmnames{l}));
+                obj.prms.(prmnames{l}) = obj.prms.(prmnames{l}) + obj.optm.adjust(obj.grad.(prmnames{l}), prmnames{l});
             end
+            
+            obj.prms.p = obj.prms.p - max(obj.prms.p);
         end
     end
 end

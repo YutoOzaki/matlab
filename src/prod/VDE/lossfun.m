@@ -49,7 +49,7 @@ classdef lossfun < basenode
             A(idx) = 1;
             loss = loss + sum(gam.*log(A));
 
-            loss = loss + 0.5.*sum(log(2*pi.*zsig + 1));
+            loss = loss + 0.5.*sum(log(2*pi.*zsig) + 1);
 
             output = sum(loss)/batchsize;
         end
@@ -108,13 +108,23 @@ classdef lossfun < basenode
             A = bsxfun(@minus, x, xmu).^2;
             dxsig = -1/(2*L) .* (1./xsig - A./(xsig.^2));
             
+            A = 2.*bsxfun(@minus, zmu, repmat(reshape(eta_mu, [J, 1, K]), [1, batchsize, 1]));
+            B = bsxfun(@rdivide, A, reshape(eta_sig, [J,1,K]));
+            C = bsxfun(@times, B, reshape(gam',[1,batchsize,K]));
+            dzmu = -0.5.*squeeze(sum(C,3));
+            
+            A = bsxfun(@rdivide, repmat(reshape(gam, [1,K,batchsize]), [J,1,1]), reshape(eta_sig, [J,K,1]));
+            dzsig = -0.5.*squeeze(sum(A,2)) + 1./(2.*zsig);
+            
             delta = struct(...
                 'gam', dgam,...
                 'PI', dPI,...
                 'eta_mu', deta_mu,...
                 'eta_sig', deta_sig,...
                 'xmu', dxmu,...
-                'xsig', dxsig...
+                'xsig', dxsig,...
+                'zmu', dzmu,...
+                'zsig', dzsig...
                 );
             
             obj.grad = delta;
@@ -134,9 +144,8 @@ classdef lossfun < basenode
             eps = 1e-5;
             
             input = obj.input;
-            names = fieldnames(input);
             batchsize = size(obj.input.x, 2);
-            names = {'eta_mu', 'eta_sig', 'gam', 'PI', 'xmu', 'xsig'};
+            names = fieldnames(obj.grad);
             
             for i=1:length(names)
                 prm = input.(names{i});
@@ -167,7 +176,8 @@ classdef lossfun < basenode
                     d(2) = obj.grad.(names{i})(ix, iy)./batchsize;
                 elseif strcmp(names{i}, 'eta_mu') || strcmp(names{i}, 'eta_sig')
                     d(2) = sum(obj.grad.(names{i})(ix, iy, :))./batchsize;
-                elseif strcmp(names{i}, 'xmu') || strcmp(names{i}, 'xsig')
+                elseif strcmp(names{i}, 'xmu') || strcmp(names{i}, 'xsig')...
+                        || strcmp(names{i}, 'zmu') || strcmp(names{i}, 'zsig')
                     d(2) = obj.grad.(names{i})(ix, iy, 1)./batchsize;
                 end
                 

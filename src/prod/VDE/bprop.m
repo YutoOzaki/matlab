@@ -17,9 +17,9 @@ function bprop(encnet, decnet, priornet, lossnode)
     dzl = encnet.reparam.backwardprop(reshape(dxa, [size(dxa,1), size(dxa,2)/L, L])./L);
     %deltacheck_zl(lossnode, encnet, decnet, L, dzl.sig, 20);
     
-    dzsig = encnet.exp.backwardprop(dzi.sig + dzl.sig);
+    dzsig = encnet.exp.backwardprop(dL.zsig + dzi.sig + dzl.sig);
     dlnzsig = encnet.sig.backwardprop(dzsig);
-    dzmu = encnet.mu.backwardprop(dzi.mu + dzl.mu);
+    dzmu = encnet.mu.backwardprop(dL.zmu + dzi.mu + dzl.mu);
     dzh = encnet.activate.backwardprop(dzmu + dlnzsig);
     dza = encnet.connect.backwardprop(dzh);
 end

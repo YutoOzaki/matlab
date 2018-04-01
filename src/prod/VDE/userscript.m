@@ -1,6 +1,6 @@
 function userscript
     %% define data
-    N = 500;
+    N = 60;
     D = 3;
     numclass = 4;
     data = testdata(N, D, numclass);
@@ -10,17 +10,16 @@ function userscript
     numnode = [D; 15; J; 11; D];
     
     K = 4;
-    PI = rand(K, 1);
-    PI = PI./sum(PI);
+    p = rand(K, 1);
     
     eta_mu = zeros(J, K);
-    eta_r = zeros(J, K);
+    eta_sig = zeros(J, K);
     for k=1:K
         eta_mu(:, k) = mvnrnd(zeros(1, J), diag(3.*ones(J, 1)), 1)';
-        eta_r(:, k) = mvnrnd(zeros(1, J), diag(ones(J, 1)), 1)';
+        eta_sig(:, k) = mvnrnd(zeros(1, J), diag(ones(J, 1)), 1)';
     end
     
-    L = 1;
+    L = 2;
     
     encnet = struct(...
         'connect', lineartrans(numnode(2), numnode(1), rmsprop(0.9, 1e-2, 1e-8)),...
@@ -41,7 +40,7 @@ function userscript
     
     priornet = struct(...
         'reparam', reparamtrans(numnode(3), 1),...
-        'weight', mogtrans(eta_mu, eta_r, PI, rmsprop(0.9, 1e-2, 1e-8))...
+        'weight', mogtrans(eta_mu, eta_sig, p, rmsprop(0.9, 1e-2, 1e-8))...
         );
     
     lossnode = lossfun();
@@ -83,16 +82,29 @@ function userscript
             priornet.reparam.init();
             loss(epoch) = loss(epoch) + fprop(x, encnet, decnet, priornet, lossnode);
             
+            %%%
+            %{
+            nets = struct('enc', encnet, 'dec', decnet, 'prior', priornet);  
+            netnames = fieldnames(nets);
+            for i=1:length(netnames)
+                nodenames = fieldnames(nets.(netnames{i}));
+                
+                for j=1:length(nodenames)
+                    fprintf('%s.%s.input\n', netnames{i}, nodenames{j});
+                    disp(nets.(netnames{i}).(nodenames{j}).input);
+                end
+            end
+            %}
+            %%%
+            
             % backward propagation
             bprop(encnet, decnet, priornet, lossnode);
             
             % gradient checking
-            gradcheck(x, encnet, decnet, priornet, lossnode);
+            %gradcheck(x, encnet, decnet, priornet, lossnode);
             
             % update
             update(struct('encnet', encnet, 'decnet', decnet, 'priornet', priornet));
-            
-            pause
         end
         
         figure(1); plot(loss(1:epoch)); drawnow;
