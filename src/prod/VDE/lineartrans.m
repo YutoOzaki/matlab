@@ -1,16 +1,25 @@
 classdef lineartrans < basenode
     properties
         input, prms, grad, optm
+        weidec
     end
     
     methods
-        function obj = lineartrans(J, D, optm)
+        function obj = lineartrans(J, D, optm, weidec)
             obj.prms = struct(...
                 'W', zeros(J, D),...
                 'b', zeros(J, 1)...
             );
             
+            optm.ms = obj.prms;
             obj.optm = optm;
+            
+            switch nargin
+                case 3
+                    obj.weidec = 0;
+                case 4
+                    obj.weidec = weidec;
+            end
         end
         
         function output = forwardprop(obj, input)
@@ -23,7 +32,7 @@ classdef lineartrans < basenode
             batchsize = size(obj.input, 2);
             
             gb = sum(input, 2)./batchsize;
-            gW = obj.input * input'./batchsize;
+            gW = obj.input * input'./batchsize + obj.weidec.*obj.prms.W';
             
             obj.grad = struct(...
                 'b', gb,...
@@ -43,7 +52,7 @@ classdef lineartrans < basenode
             prmnames = fieldnames(obj.grad);
             
             for l=1:length(prmnames)
-                obj.prms.(prmnames{l}) = obj.prms.(prmnames{l}) + obj.optm.adjust(obj.grad.(prmnames{l}));
+                obj.prms.(prmnames{l}) = obj.prms.(prmnames{l}) + obj.optm.adjust(obj.grad.(prmnames{l}), prmnames{l});
             end
         end
     end

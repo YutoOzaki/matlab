@@ -6,6 +6,7 @@ classdef reparamtrans < basenode
     
     methods
         function obj = reparamtrans(J, L)
+            obj.prms = struct();
             obj.J = J;
             obj.L = L;
         end

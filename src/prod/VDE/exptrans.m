@@ -5,7 +5,7 @@ classdef exptrans < basenode
     
     methods
         function obj = exptrans()
-            obj.prms = [];
+            obj.prms = struct();
             obj.optm = [];
         end
         

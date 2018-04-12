@@ -1,21 +1,21 @@
-classdef tanhtrans < basenode
+classdef identitymap < basenode
     properties
         input, prms, grad, optm
     end
     
     methods
-        function obj = tanhtrans()
+        function obj = identitymap()
             obj.prms = struct();
             obj.optm = [];
         end
         
         function output = forwardprop(obj, input)
             obj.input = input;
-            output = tanh(input);
+            output = input;
         end
         
         function delta = backwardprop(obj, input)
-            delta = input.*(1 - tanh(obj.input).^2);
+            delta = input;
         end
         
         function init(obj)
