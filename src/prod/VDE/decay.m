@@ -1,15 +1,17 @@
-classdef rmsprop < optimizer
+classdef decay < optimizer
     properties
-        r, a, e, ms
-        dir
+        eta, alpha, a, b, k
+        dir, ms
     end
     
     methods
-        function obj = rmsprop(r, a, e, dir)
-            obj.r = r;
+        function obj = decay(alpha, a, b, dir)
+            assert(alpha > 0.5 && alpha <= 1, 'alpha should be 0.5 < alpha <=1');
+            
+            obj.alpha = alpha;
             obj.a = a;
-            obj.e = e;
-            obj.ms = [];
+            obj.b = b;
+            obj.k = 0;
             
             switch dir
                 case 'asc'
@@ -29,16 +31,14 @@ classdef rmsprop < optimizer
         end
         
         function updateval = adjust(obj, grad, prmname)
-            obj.ms.(prmname) = obj.r.*obj.ms.(prmname) + (1 - obj.r).*(grad.^2);
-            updateval = obj.dir .* obj.a.*grad./(obj.ms.(prmname) + obj.e);
+            %obj.eta = (2 + obj.k)^(-obj.a);
+            obj.eta = obj.a/(obj.b + obj.k)^(obj.alpha);
+            updateval = obj.dir .* obj.eta.*grad;
+            
+            obj.k = obj.k + 1;
         end
         
         function refresh(obj)
-            names = fieldnames(obj.ms);
-            
-            for i=1:length(names)
-                obj.ms.(names{i}) = obj.ms.(names{i}).*0;
-            end
         end
     end
 end

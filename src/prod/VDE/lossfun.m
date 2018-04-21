@@ -85,7 +85,8 @@ classdef lossfun < basenode
                 dgam(k, :) = -0.5.*sum(D) + buf - 1;
             end
             
-            dPI = bsxfun(@rdivide, gam, PI);
+            dLdPI = bsxfun(@rdivide, gam, PI);
+            dLdPI = sum(dLdPI, 2);
             
             deta_mu = zeros(J, K, batchsize);
             deta_sig = zeros(J, K, batchsize);
@@ -101,6 +102,8 @@ classdef lossfun < basenode
                 
                 deta_sig(:, k, :) = -0.5 .* bsxfun(@times, D, gam(k, :));
             end
+            deta_mu = sum(deta_mu, 3);
+            deta_sig = sum(deta_sig, 3);
             
             A = bsxfun(@plus, -2.*x, 2.*xmu);
             dxmu = -1/(2*L) .* A./xsig;
@@ -118,7 +121,7 @@ classdef lossfun < basenode
             
             delta = struct(...
                 'gam', dgam,...
-                'PI', dPI,...
+                'PI', dLdPI,...
                 'eta_mu', deta_mu,...
                 'eta_sig', deta_sig,...
                 'xmu', dxmu,...
@@ -136,19 +139,20 @@ classdef lossfun < basenode
         function update(obj)
         end
         
+        function refresh(obj)
+        end
+        
         function localgradcheck(obj)
-            cache = obj.input;
-            
+            eps = 1e-6;
             f = zeros(2, 1);
             d = zeros(2, 1);
-            eps = 1e-5;
             
-            input = obj.input;
             batchsize = size(obj.input.x, 2);
             names = fieldnames(obj.grad);
             
+            fprintf('---gradient checking (VDE loss function)---\n');
             for i=1:length(names)
-                prm = input.(names{i});
+                prm = obj.input.(names{i});
                 
                 lx = size(prm, 1);
                 ly = size(prm, 2);
@@ -158,34 +162,22 @@ classdef lossfun < basenode
                 val = prm(ix, iy);
 
                 prm(ix, iy) = val + eps;
-                input.(names{i}) = prm;
-                f(1) = obj.forwardprop(input);
+                obj.input.(names{i}) = prm;
+                f(1) = obj.forwardprop(obj.input);
                 
                 prm(ix, iy) = val - eps;
-                input.(names{i}) = prm;
-                f(2) = obj.forwardprop(input);
+                obj.input.(names{i}) = prm;
+                f(2) = obj.forwardprop(obj.input);
                 
                 prm(ix, iy) = val;
-                input.(names{i}) = prm;
+                obj.input.(names{i}) = prm;
 
                 d(1) = (f(1) - f(2))./(2*eps);
-                
-                if strcmp(names{i}, 'PI')
-                    d(2) = sum(obj.grad.(names{i})(ix, :))./batchsize;
-                elseif strcmp(names{i}, 'gam')
-                    d(2) = obj.grad.(names{i})(ix, iy)./batchsize;
-                elseif strcmp(names{i}, 'eta_mu') || strcmp(names{i}, 'eta_sig')
-                    d(2) = sum(obj.grad.(names{i})(ix, iy, :))./batchsize;
-                elseif strcmp(names{i}, 'xmu') || strcmp(names{i}, 'xsig')...
-                        || strcmp(names{i}, 'zmu') || strcmp(names{i}, 'zsig')
-                    d(2) = obj.grad.(names{i})(ix, iy, 1)./batchsize;
-                end
+                d(2) = obj.grad.(names{i})(ix, iy, 1)./batchsize;
                 
                 re = abs(d(1) - d(2))./max(abs(d(1)), abs(d(2)));
                 fprintf('%s: %e, %e, %e, %e\n', names{i}, val, d(1), d(2), re);
             end
-            
-            obj.input = cache;
         end
     end
 end

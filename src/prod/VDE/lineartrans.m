@@ -55,5 +55,16 @@ classdef lineartrans < basenode
                 obj.prms.(prmnames{l}) = obj.prms.(prmnames{l}) + obj.optm.adjust(obj.grad.(prmnames{l}), prmnames{l});
             end
         end
+        
+        function refresh(obj)
+            obj.weidec = 0;
+            obj.optm.refresh();
+        end
+        
+        function setoptm(obj, optm)
+            obj.optm = optm;
+            obj.optm.ms = obj.prms;
+            obj.optm.refresh();
+        end
     end
 end

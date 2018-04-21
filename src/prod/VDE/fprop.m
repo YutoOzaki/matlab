@@ -1,25 +1,37 @@
-function loss = fprop(x, encnet, decnet, priornet, lossnode)
-    za = encnet.connect.forwardprop(x);
-    zh = encnet.activate.forwardprop(za);
-    zmu = encnet.mu.forwardprop(zh);
-    lnzsig = encnet.sig.forwardprop(zh);
-    zsig = encnet.exp.forwardprop(lnzsig);
-    z = encnet.reparam.forwardprop(struct('mu', zmu, 'sig', zsig));
-
+function loss = fprop(x, nets, lossnode)
+    encnet = nets.encnet;
+    names = fieldnames(encnet);
+    input = x;
+    for i=1:length(names)
+        input = encnet.(names{i}).forwardprop(input);
+    end
+    
+    encrpm = nets.encrpm;
+    zmu = encrpm.mu.forwardprop(input);
+    zsig = encrpm.exp.forwardprop(encrpm.lnsigsq.forwardprop(input));
+    z = encrpm.reparam.forwardprop(struct('mu', zmu, 'sig', zsig));
+    
     L = size(z,3);
     z = reshape(z, [size(z,1), size(z,2)*L]);
-
-    xa = decnet.connect.forwardprop(z);
-    xh = decnet.activate.forwardprop(xa);
-    xmu = decnet.mu.forwardprop(xh);
-    lnxsig = decnet.sig.forwardprop(xh);
-    xsig = decnet.exp.forwardprop(lnxsig);
+    
+    decnet = nets.decnet;
+    names = fieldnames(decnet);
+    input = z;
+    for i=1:length(names)
+        input = decnet.(names{i}).forwardprop(input);
+    end
+    
+    decrpm = nets.decrpm;
+    xmu = decrpm.mu.forwardprop(input);
+    xsig = decrpm.exp.forwardprop(decrpm.lnsigsq.forwardprop(input));
+    
     xmu = reshape(xmu, [size(xmu,1), size(xmu,2)/L, L]);
     xsig = reshape(xsig, [size(xsig,1), size(xsig,2)/L, L]);
-
+    
+    priornet = nets.priornet;
     z = priornet.reparam.forwardprop(struct('mu', zmu, 'sig', zsig));
     gam = priornet.weight.forwardprop(z);
-
+    
     loss = lossnode.forwardprop(struct(...
         'x', x,...
         'xmu', xmu,...
@@ -28,7 +40,7 @@ function loss = fprop(x, encnet, decnet, priornet, lossnode)
         'zsig', zsig,...
         'gam', gam,...
         'eta_mu', priornet.weight.prms.eta_mu,...
-        'eta_sig', priornet.weight.prms.eta_sig.^2,...
-        'PI', softmax(priornet.weight.prms.p)...
+        'eta_sig', exp(priornet.weight.prms.eta_lnsig),...
+        'PI', priornet.weight.getPI()...
         ));
 end

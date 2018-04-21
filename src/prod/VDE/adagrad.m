@@ -1,15 +1,14 @@
-classdef rmsprop < optimizer
+classdef adagrad < optimizer
     properties
-        r, a, e, ms
+        eta, e, ms
         dir
     end
     
     methods
-        function obj = rmsprop(r, a, e, dir)
-            obj.r = r;
-            obj.a = a;
+        function obj = adagrad(eta, e, dir)
+            obj.eta = eta;
             obj.e = e;
-            obj.ms = [];
+            obj.ms = struct();
             
             switch dir
                 case 'asc'
@@ -29,8 +28,8 @@ classdef rmsprop < optimizer
         end
         
         function updateval = adjust(obj, grad, prmname)
-            obj.ms.(prmname) = obj.r.*obj.ms.(prmname) + (1 - obj.r).*(grad.^2);
-            updateval = obj.dir .* obj.a.*grad./(obj.ms.(prmname) + obj.e);
+            obj.ms.(prmname) = obj.ms.(prmname) + grad.^2;
+            updateval = obj.dir .* obj.eta.*grad./sqrt(obj.ms.(prmname) + obj.e);
         end
         
         function refresh(obj)

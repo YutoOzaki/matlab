@@ -8,5 +8,6 @@ classdef (Abstract) basenode < handle
         delta = backwardprop(obj, input)
         init(obj)
         update(obj)
+        refresh(obj)
     end
 end

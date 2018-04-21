@@ -1,7 +1,7 @@
 function generatedata
-    N = 600;
-    D = 2;
-    numclass = 4;
+    N = 4000;
+    D = 3;
+    numclass = 5;
     data = testdata(N, D, numclass);
     
     save('testdata.mat', 'data');

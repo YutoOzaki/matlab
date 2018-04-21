@@ -1,35 +1,34 @@
 function pretraining_rpsae
-    rng(20);
     %% load data
     load('testdata.mat');
     N = size(data, 2);
     D = size(data, 1);
     
     %% define networks
-    numnode = [D, 10, 3];
+    numnode = [D, 10, 2];
     L = 100;
     weidec = 1e-2;
     
     encnet = struct(...
-        'l1con', lineartrans(numnode(2), numnode(1), rmsprop(0.9, 1e-2, 1e-8), weidec),...
+        'l1con', lineartrans(numnode(2), numnode(1), rmsprop(0.9, 1e-3, 1e-8, 'desc'), weidec),...
         'l1act', tanhtrans()...
         );
     
     encrpm = struct(...
-        'mu', lineartrans(numnode(3), numnode(2), rmsprop(0.9, 1e-2, 1e-8), weidec),...
-        'lnsigsq', lineartrans(numnode(3), numnode(2), rmsprop(0.9, 1e-2, 1e-8), weidec),...
+        'mu', lineartrans(numnode(3), numnode(2), rmsprop(0.9, 1e-3, 1e-8, 'desc'), weidec),...
+        'lnsigsq', lineartrans(numnode(3), numnode(2), rmsprop(0.9, 1e-3, 1e-8, 'desc'), weidec),...
         'exp', exptrans(),...
         'reparam', reparamtrans(numnode(3), L)...
         );
     
     decnet = struct(...
-        'l1con', lineartrans(numnode(2), numnode(3), rmsprop(0.9, 1e-2, 1e-8), weidec),...
+        'l1con', lineartrans(numnode(2), numnode(3), rmsprop(0.9, 1e-3, 1e-8, 'desc'), weidec),...
         'l1act', tanhtrans()...
     );
     
     decrpm = struct(...
-        'mu', lineartrans(numnode(1), numnode(2), rmsprop(0.9, 1e-2, 1e-8), weidec),...
-        'lnsigsq', lineartrans(numnode(1), numnode(2), rmsprop(0.9, 1e-2, 1e-8), weidec),...
+        'mu', lineartrans(numnode(1), numnode(2), rmsprop(0.9, 1e-3, 1e-8, 'desc'), weidec),...
+        'lnsigsq', lineartrans(numnode(1), numnode(2), rmsprop(0.9, 1e-3, 1e-8, 'desc'), weidec),...
         'exp', exptrans(),...
         'reparam', reparamtrans(numnode(1), L)...
         );
@@ -45,11 +44,11 @@ function pretraining_rpsae
     end
     
     %% define configuration
-    numepoch = 100;
-    batchsize = 50;
+    numepoch = 30;
+    batchsize = 100;
     numbatch = floor(N / batchsize);
     batchidx = zeros(2, 1);
-    bestprms = [];
+    bestprms = nets;
     bestscore = Inf;
     
     %% main loop
@@ -99,7 +98,20 @@ function pretraining_rpsae
         batchidx = batchidx .* 0;
     end
     
-    save('pretrained.mat', 'bestprms');
+    savemodel('pretrained.mat', bestprms);
+end
+
+function savemodel(filename, bestprms)
+    netnames = fieldnames(bestprms);
+    for i=1:length(netnames)
+        nodenames = fieldnames(bestprms.(netnames{i}));
+        
+        for j=1:length(nodenames)
+            bestprms.(netnames{i}).(nodenames{j}).refresh();
+        end
+    end
+    
+    save(filename, 'bestprms');
 end
 
 function nets = bprop(delta, nets)

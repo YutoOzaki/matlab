@@ -2,78 +2,54 @@ function userscript
     %% load data
     load('testdata.mat');
     N = size(data, 2);
-    D = size(data, 1);
     
     %% define model
-    load('trained.mat');
-    J = 8;
-    numnode = [D; 40; J; 40; D];
+    nets = struct();
+    L = 1;
     
-    K = 4;
-    p = rand(K, 1);
-    
-    eta_mu = zeros(J, K);
-    eta_sig = zeros(J, K);
-    for k=1:K
-        eta_mu(:, k) = mvnrnd(zeros(1, J), diag(3.*ones(J, 1)), 1)';
-        eta_sig(:, k) = mvnrnd(zeros(1, J), diag(ones(J, 1)), 1)';
+    load('pretrained.mat');
+    netnames = fieldnames(bestprms);
+    for i=1:length(netnames)
+        nets.(netnames{i}) = bestprms.(netnames{i});
+        
+        nodenames = fieldnames(nets.(netnames{i}));
+        for j=1:length(nodenames)
+            if ~isempty(nets.(netnames{i}).(nodenames{j}).optm)
+                nets.(netnames{i}).(nodenames{j}).setoptm(rmsprop(0.9, 1e-3, 1e-8, 'asc'));
+            end
+        end
     end
     
-    L = 2;
-    
-    names = fieldnames(encnet);
-    x = data(:, 1);
-    for i=1:length(names)
-        x = encnet.(names{i}).forwardprop(x);
+    load('fit.mat');
+    nodenames = fieldnames(bestprms);
+    for i=1:length(nodenames)
+        nets.(nodenames{i}) = bestprms.(nodenames{i});
+        
+        nodenames = fieldnames(nets.(netnames{i}));
+        for j=1:length(nodenames)
+            if ~isempty(nets.(netnames{i}).(nodenames{j}).optm)
+                nets.(netnames{i}).(nodenames{j}).setoptm(adagrad(1e-2, 1e-8, 'asc'));
+            end
+        end
     end
-    M = size(x, 1);
-    infnet = struct(...
-        'mu', lineartrans(J, M, rmsprop(0.9, 1e-3, 1e-8)),...
-        'sig', lineartrans(J, M, rmsprop(0.9, 1e-3, 1e-8)),...
-        'exp', exptrans(),...
-        'reparam', reparamtrans(J, L)...
-        );
     
-    
-    gennet = struct(...
-        'connect', lineartrans(numnode(4), J, rmsprop(0.9, 1e-3, 1e-8)),...
-        'activate', tanhtrans(),...
-        'mu', lineartrans(numnode(5), numnode(4), rmsprop(0.9, 1e-3, 1e-8)),...
-        'sig', lineartrans(numnode(5), numnode(4), rmsprop(0.9, 1e-3, 1e-8)),...
-        'exp', exptrans()...
-        );
-    
-    priornet = struct(...
-        'reparam', reparamtrans(numnode(3), 1),...
-        'weight', mogtrans(eta_mu, eta_sig, p, rmsprop(0.9, 1e-3, 1e-8))...
-        );
+    nets.encrpm.reparam.L =  L;
+    nets.priornet.reparam.L = 1;
+    K = nets.priornet.weight.K;
+    nets.priornet.weight.gam = 0;
     
     lossnode = lossfun();
     
-    names = fieldnames(encnet);
-    for i=1:length(names)
-        encnet.(names{i}).init();
-    end
-    
-    names = fieldnames(decnet);
-    for i=1:length(names)
-        decnet.(names{i}).init();
-    end
-    
-    names = fieldnames(priornet);
-    for i=1:length(names)
-        priornet.(names{i}).init();
-    end
-    
     %% define configuration
     numepoch = 100;
-    batchsize = 50;
+    batchsize = 100;
     numbatch = floor(N / batchsize);
     batchidx = zeros(2, 1);
     
     %% main loop
     loss = zeros(numepoch, 1);
     label = zeros(N, 1);
+    z = zeros(nets.priornet.weight.J, N);
             
     for epoch=1:numepoch
         rndidx = randperm(N);
@@ -84,49 +60,72 @@ function userscript
             x = data(:, rndidx(batchidx(1):batchidx(2)));
             
             % forward propagation
-            encnet.reparam.init();
-            priornet.reparam.init();
-            loss(epoch) = loss(epoch) + fprop(x, encnet, decnet, priornet, lossnode);
+            nets.encrpm.reparam.init();
+            nets.priornet.reparam.init();
+            loss(epoch) = loss(epoch) + fprop(x, nets, lossnode);
             
             % backward propagation
-            bprop(encnet, decnet, priornet, lossnode);
+            bprop(nets, lossnode);
             
             % gradient checking
-            %gradcheck(x, encnet, decnet, priornet, lossnode);
+            %gradcheck(x, nets, lossnode);pause
             
             % update
-            update(struct('encnet', encnet, 'decnet', decnet, 'priornet', priornet));
+            %update(nets);
+            if rem(floor(epoch/10), 2) == 0
+                update(struct(...
+                    'encnet', nets.encnet,...
+                    'encrpm', nets.encrpm,...
+                    'decnet', nets.decnet,...
+                    'decrpm', nets.decrpm...
+                ));
+            else
+                update(struct(...
+                    'priornet', nets.priornet...
+                ));
+            end
             
             % clustering assignment
-            gam = posterior(x, encnet, priornet);
+            [gam, zt] = posterior(x, nets.encnet, nets.encrpm, nets.priornet);
             [~,I] = max(gam);
-            label(batchidx(1):batchidx(2), 1) = I';
+            label(rndidx(batchidx(1):batchidx(2)), 1) = I';
+            z(:, rndidx(batchidx(1):batchidx(2))) = zt;
         end
         
         figure(1); plot(loss(1:epoch)); drawnow;
         fprintf('epoch %d, loss: %e\n', epoch, loss(epoch));
         
-        figure(2);
         c = rand(K, 3);
         for k=1:K
             idx = label == k;
+            
+            figure(2);
             scatter(data(1, idx), data(2, idx), 20, c(k, :)./sum(c(k, :)));hold on
+            
+            figure(3);
+            scatter(z(1, idx), z(2, idx), 20, c(k, :)./sum(c(k, :))); hold on
+            scatter(nets.priornet.weight.prms.eta_mu(1, k), nets.priornet.weight.prms.eta_mu(2, k),...
+                    20, 'MarkerEdgeColor', [0 0 0], 'MarkerFaceColor', [0 .7 .7], 'LineWidth', 2); hold on
+            drawellip(nets.priornet.weight.prms.eta_mu(:, k), diag(exp(nets.priornet.weight.prms.eta_lnsig(:, k)))); hold on
         end
         hold off
-        drawnow;
+        drawnow();
         
         batchidx = batchidx .* 0;
     end
 end
 
-function gam = posterior(x, encnet, priornet)
-    za = encnet.connect.forwardprop(x);
-    zh = encnet.activate.forwardprop(za);
-    zmu = encnet.mu.forwardprop(zh);
-    lnzsig = encnet.sig.forwardprop(zh);
-    zsig = encnet.exp.forwardprop(lnzsig);
+function [gam, z] = posterior(x, encnet, encrpm, priornet)
+    names = fieldnames(encnet);
+    input = x;
+    for i=1:length(names)
+        input = encnet.(names{i}).forwardprop(input);
+    end
+
+    mu = encrpm.mu.forwardprop(input);
+    sigsq = encrpm.exp.forwardprop(encrpm.lnsigsq.forwardprop(input));
     
-    priornet.reparam.init();
-    z = priornet.reparam.forwardprop(struct('mu', zmu, 'sig', zsig));
+    z = priornet.reparam.forwardprop(struct('mu', mu, 'sig', sigsq));
+    z = mean(z, 3);
     gam = priornet.weight.forwardprop(z);
 end

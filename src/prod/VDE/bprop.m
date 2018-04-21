@@ -1,27 +1,47 @@
-function bprop(encnet, decnet, priornet, lossnode)
+function bprop(nets, lossnode)
     dL = lossnode.backwardprop([]);
     L = size(dL.xmu,3);
     %lossnode.localgradcheck();
     
+    priornet = nets.priornet;
     dgam = priornet.weight.backwardprop(dL);
     %deltacheck_gam(lossnode, priornet, L, dgam, 20);
     dzi = priornet.reparam.backwardprop(dgam);
     %deltacheck_zi(lossnode, priornet, L, dzi.sig, 20);
     
-    dxmu = decnet.mu.backwardprop(L.*reshape(dL.xmu, [size(dL.xmu,1), size(dL.xmu,2)*L]));
-    dxsig = decnet.exp.backwardprop(L.*reshape(dL.xsig, [size(dL.xsig,1), size(dL.xsig,2)*L]));
-    dlnxsig = decnet.sig.backwardprop(dxsig);
-    dxh = decnet.activate.backwardprop(dxmu + dlnxsig);
-    dxa = decnet.connect.backwardprop(dxh);
+    decrpm = nets.decrpm;
+    dxmu = decrpm.mu.backwardprop(L.*reshape(dL.xmu, [size(dL.xmu,1), size(dL.xmu,2)*L]));
+    dxsig = decrpm.exp.backwardprop(L.*reshape(dL.xsig, [size(dL.xsig,1), size(dL.xsig,2)*L]));
+    dlnxsig = decrpm.lnsigsq.backwardprop(dxsig);
     
-    dzl = encnet.reparam.backwardprop(reshape(dxa, [size(dxa,1), size(dxa,2)/L, L])./L);
+    decnet = nets.decnet;
+    names = flipud(fieldnames(decnet));
+    delta = dxmu + dlnxsig;
+    for i=1:length(names)
+        delta = decnet.(names{i}).backwardprop(delta);
+    end
+    dxa = delta;
+    
+    %dxh = decnet.activate.backwardprop(dxmu + dlnxsig);
+    %dxa = decnet.connect.backwardprop(dxh);
+    
+    encrpm = nets.encrpm;
+    dzl = encrpm.reparam.backwardprop(reshape(dxa, [size(dxa,1), size(dxa,2)/L, L])./L);
     %deltacheck_zl(lossnode, encnet, decnet, L, dzl.sig, 20);
     
-    dzsig = encnet.exp.backwardprop(dL.zsig + dzi.sig + dzl.sig);
-    dlnzsig = encnet.sig.backwardprop(dzsig);
-    dzmu = encnet.mu.backwardprop(dL.zmu + dzi.mu + dzl.mu);
-    dzh = encnet.activate.backwardprop(dzmu + dlnzsig);
-    dza = encnet.connect.backwardprop(dzh);
+    dzmu = encrpm.mu.backwardprop(dL.zmu + dzi.mu + dzl.mu);
+    dzsig = encrpm.exp.backwardprop(dL.zsig + dzi.sig + dzl.sig);
+    dlnzsig = encrpm.lnsigsq.backwardprop(dzsig);
+    
+    encnet = nets.encnet;
+    names = flipud(fieldnames(encnet));
+    delta = dzmu + dlnzsig;
+    for i=1:length(names)
+        delta = encnet.(names{i}).backwardprop(delta);
+    end
+    
+    %dzh = encnet.activate.backwardprop(dzmu + dlnzsig);
+    %dza = encnet.connect.backwardprop(dzh);
 end
 
 function deltacheck_gam(lossnode, priornet, L, delta, num)

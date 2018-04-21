@@ -9,6 +9,7 @@ classdef reparamtrans < basenode
             obj.prms = struct();
             obj.J = J;
             obj.L = L;
+            obj.optm = [];
         end
         
         function output = forwardprop(obj, input)
@@ -42,6 +43,9 @@ classdef reparamtrans < basenode
         end
         
         function update(obj)
+        end
+        
+        function refresh(obj)
         end
     end
 end

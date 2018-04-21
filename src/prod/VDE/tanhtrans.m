@@ -23,5 +23,8 @@ classdef tanhtrans < basenode
         
         function update(obj)
         end
+        
+        function refresh(obj)
+        end
     end
 end

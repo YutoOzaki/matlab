@@ -23,5 +23,8 @@ classdef identitymap < basenode
         
         function update(obj)
         end
+        
+        function refresh(obj)
+        end
     end
 end

@@ -1,9 +1,8 @@
-function gradcheck(x, encnet, decnet, priornet, lossnode)
+function gradcheck(x, nets, lossnode)
     eps = 1e-6;
     f = zeros(2, 1);
     d = zeros(2, 1);
-
-    nets = struct('enc', encnet, 'dec', decnet, 'prior', priornet);  
+ 
     netnames = fieldnames(nets);
     L = length(netnames);
     
@@ -31,11 +30,11 @@ function gradcheck(x, encnet, decnet, priornet, lossnode)
 
                 prm(a, b) = val + eps;
                 nets.(netnames{l}).(names{i}).prms.(prmnames{j}) = prm;
-                f(1) = fprop(x, encnet, decnet, priornet, lossnode);
+                f(1) = fprop(x, nets, lossnode);
 
                 prm(a, b) = val - eps;
                 nets.(netnames{l}).(names{i}).prms.(prmnames{j}) = prm;
-                f(2) = fprop(x, encnet, decnet, priornet, lossnode);
+                f(2) = fprop(x, nets, lossnode);
 
                 d(1) = (f(1) - f(2))/(2*eps);
                 d(2) = nets.(netnames{l}).(names{i}).grad.(prmnames{j})(a, b);
