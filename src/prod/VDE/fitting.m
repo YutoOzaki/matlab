@@ -1,6 +1,6 @@
-function fitting
+function fitting(datafile, numepoch, K)
     %% load data
-    load('testdata.mat');
+    load(datafile);
     
     %% load autoencoders and transform the data
     load('pretrained.mat');
@@ -8,14 +8,13 @@ function fitting
     encrpm = bestprms.encrpm;
     
     %% define prior net
-    K = 5;
     J = encrpm.reparam.J;
     L = 100;
     gam = 1;
     
     priornet = struct(...
         'reparam', reparamtrans(J, L),...
-        'weight', mogtrans(K, J, gam, adagrad(2, 1e-8, 'asc'))...
+        'weight', mogtrans(K, J, gam, adagrad(5e-2, 1e-8, 'asc'))...
         );
     
     priornet.weight.init();
@@ -23,7 +22,6 @@ function fitting
     
     %% define configuration
     N = size(data, 2);
-    numepoch = 30;
     batchsize = 100;
     numbatch = floor(N / batchsize);
     batchidx = zeros(2, 1);
@@ -256,7 +254,7 @@ end
 
 function init(data, encnet, encrpm, priornet)
     N = size(data, 2);
-    batchsize = 50;
+    batchsize = 100;
     K = priornet.weight.K;
     
     for k=1:K

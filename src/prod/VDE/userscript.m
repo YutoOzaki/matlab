@@ -1,4 +1,4 @@
-function userscript
+function userscript(numepoch)
     %% load data
     load('testdata.mat');
     N = size(data, 2);
@@ -15,7 +15,7 @@ function userscript
         nodenames = fieldnames(nets.(netnames{i}));
         for j=1:length(nodenames)
             if ~isempty(nets.(netnames{i}).(nodenames{j}).optm)
-                nets.(netnames{i}).(nodenames{j}).setoptm(rmsprop(0.9, 1e-3, 1e-8, 'asc'));
+                nets.(netnames{i}).(nodenames{j}).setoptm(adagrad(1e-2, 1e-8, 'asc'));
             end
         end
     end
@@ -28,7 +28,7 @@ function userscript
         nodenames = fieldnames(nets.(netnames{i}));
         for j=1:length(nodenames)
             if ~isempty(nets.(netnames{i}).(nodenames{j}).optm)
-                nets.(netnames{i}).(nodenames{j}).setoptm(adagrad(1e-2, 1e-8, 'asc'));
+                nets.(netnames{i}).(nodenames{j}).setoptm(adagrad(1e-4, 1e-8, 'asc'));
             end
         end
     end
@@ -36,12 +36,10 @@ function userscript
     nets.encrpm.reparam.L =  L;
     nets.priornet.reparam.L = 1;
     K = nets.priornet.weight.K;
-    nets.priornet.weight.gam = 0;
     
     lossnode = lossfun();
     
     %% define configuration
-    numepoch = 100;
     batchsize = 100;
     numbatch = floor(N / batchsize);
     batchidx = zeros(2, 1);
@@ -54,6 +52,19 @@ function userscript
     for epoch=1:numepoch
         rndidx = randperm(N);
         
+        if rem(floor(epoch/20), 2) == 0
+                prms_tbu = struct(...
+                    'encnet', nets.encnet,...
+                    'encrpm', nets.encrpm,...
+                    'decnet', nets.decnet,...
+                    'decrpm', nets.decrpm...
+                );
+            else
+                prms_tbu = struct(...
+                    'priornet', nets.priornet...
+                );
+        end
+            
         for batch=1:numbatch
             batchidx(1) = batchidx(2) + 1;
             batchidx(2) = batchidx(1) + batchsize - 1;
@@ -71,19 +82,8 @@ function userscript
             %gradcheck(x, nets, lossnode);pause
             
             % update
-            %update(nets);
-            if rem(floor(epoch/10), 2) == 0
-                update(struct(...
-                    'encnet', nets.encnet,...
-                    'encrpm', nets.encrpm,...
-                    'decnet', nets.decnet,...
-                    'decrpm', nets.decrpm...
-                ));
-            else
-                update(struct(...
-                    'priornet', nets.priornet...
-                ));
-            end
+            update(nets);
+            %update(prms_tbu);
             
             % clustering assignment
             [gam, zt] = posterior(x, nets.encnet, nets.encrpm, nets.priornet);
@@ -113,6 +113,8 @@ function userscript
         
         batchidx = batchidx .* 0;
     end
+    
+    save('vde_clustering_result.mat', 'label');
 end
 
 function [gam, z] = posterior(x, encnet, encrpm, priornet)
