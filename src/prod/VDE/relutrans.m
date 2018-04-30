@@ -1,21 +1,27 @@
-classdef tanhtrans < basenode
+classdef relutrans < basenode
     properties
         input, prms, grad, optm
     end
     
     methods
-        function obj = tanhtrans()
+        function obj = relutrans()
             obj.prms = struct();
             obj.optm = [];
         end
         
         function output = forwardprop(obj, input)
             obj.input = input;
-            output = tanh(input);
+            idx = input < 0;
+            input(idx) = 0;
+            output = input;
         end
         
         function delta = backwardprop(obj, input)
-            delta = input.*(1 - tanh(obj.input).^2);
+            idx = obj.input < 0;
+            dinput = ones(size(input, 1), size(input, 2), class(input));
+            dinput(idx) = 0;
+            
+            delta = input.*dinput;
         end
         
         function init(obj)

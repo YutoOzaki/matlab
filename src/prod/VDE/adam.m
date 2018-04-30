@@ -1,14 +1,18 @@
-classdef adagrad < optimizer
+classdef adam < optimizer
     properties
-        eta, e, ms
+        b1, b2, eta, e, ms, mg, t
         dir
     end
     
     methods
-        function obj = adagrad(eta, e, dir)
+        function obj = adam(b1, b2, eta, e, dir)
+            obj.b1 = b1;
+            obj.b2 = b2;
             obj.eta = eta;
             obj.e = e;
             obj.ms = struct();
+            obj.mg = struct();
+            obj.t = struct();
             
             switch dir
                 case 'asc'
@@ -28,8 +32,15 @@ classdef adagrad < optimizer
         end
         
         function updateval = adjust(obj, grad, prmname)
-            obj.ms.(prmname) = obj.ms.(prmname) + grad.^2;
-            updateval = obj.dir .* obj.eta.*grad./sqrt(obj.ms.(prmname) + obj.e);
+            obj.mg.(prmname) = obj.b1.*obj.mg.(prmname) + (1 - obj.b1).*grad;
+            obj.ms.(prmname) = obj.b2.*obj.ms.(prmname) + (1 - obj.b2).*(grad.^2);
+            
+            obj.t.(prmname) = obj.t.(prmname) + 1;
+            
+            mghat = obj.mg.(prmname)./(1 - obj.b1^obj.t.(prmname));
+            mshat = obj.ms.(prmname)./(1 - obj.b2^obj.t.(prmname));
+            
+            updateval = obj.dir .* obj.eta.*mghat./(sqrt(mshat) + obj.e);
         end
         
         function init(obj, prms)
@@ -37,6 +48,8 @@ classdef adagrad < optimizer
             
             for i=1:length(prmnames)
                 obj.ms.(prmnames{i}) = prms.(prmnames{i}).*0;
+                obj.mg.(prmnames{i}) = prms.(prmnames{i}).*0;
+                obj.t.(prmnames{i}) = 0;
             end
         end
         

@@ -1,36 +1,56 @@
-function pretraining_rpsae(datafile, numepoch)
+function pretraining_rpsae(datafile, h, act, L, numepoch, gpumode, drawrecon)
+    switch nargin
+        case 6
+            drawrecon = @defaultplot;
+    end
+    
     %% load data
     load(datafile);
+    
+    if gpumode
+        data = gpuArray(cast(data, 'single'));
+    end
+    
     N = size(data, 2);
     D = size(data, 1);
     
-    %% define networks
-    numnode = [D, 15, 5];
-    L = 100;
-    weidec = 1e-2;
+    %% define configuration
+    batchsize = 128;
+    numbatch = floor(N / batchsize);
+    batchidx = zeros(2, 1);
     
-    encnet = struct(...
-        'l1con', lineartrans(numnode(2), numnode(1), adagrad(1e-1, 1e-8, 'desc'), weidec),...
-        'l1act', tanhtrans()...
-        );
+    %% define networks
+    numnode = [D h];
+    weidec = 1e-3;
+    
+    encnet = struct();
+    for l=1:(length(numnode) - 2)
+        nodename = strcat('l', num2str(l), 'con');
+        encnet.(nodename) = lineartrans(numnode(l + 1), numnode(l), adam(0.9, 0.999, 1e-3, 1e-8, 'desc'), weidec, gpumode);
+        nodename = strcat('l', num2str(l), 'act');
+        encnet.(nodename) = copy(act{l});
+    end
     
     encrpm = struct(...
-        'mu', lineartrans(numnode(3), numnode(2), adagrad(1e-1, 1e-8, 'desc'), weidec),...
-        'lnsigsq', lineartrans(numnode(3), numnode(2), adagrad(1e-1, 1e-8, 'desc'), weidec),...
+        'mu', lineartrans(numnode(end), numnode(end - 1), adam(0.9, 0.999, 1e-3, 1e-8, 'desc'), weidec, gpumode),...
+        'lnsigsq', lineartrans(numnode(end), numnode(end - 1), adam(0.9, 0.999, 1e-3, 1e-8, 'desc'), weidec, gpumode),...
         'exp', exptrans(),...
-        'reparam', reparamtrans(numnode(3), L)...
+        'reparam', reparamtrans(numnode(end), L, numbatch, gpumode)...
         );
     
-    decnet = struct(...
-        'l1con', lineartrans(numnode(2), numnode(3), adagrad(1e-1, 1e-8, 'desc'), weidec),...
-        'l1act', tanhtrans()...
-    );
+    decnet = struct();
+    for l=length(numnode):-1:3
+        nodename = strcat('l', num2str(l), 'con');
+        decnet.(nodename) = lineartrans(numnode(l - 1), numnode(l), adam(0.9, 0.999, 1e-3, 1e-8, 'desc'), weidec, gpumode);
+        nodename = strcat('l', num2str(l), 'act');
+        decnet.(nodename) = copy(act{l - 2});
+    end
     
     decrpm = struct(...
-        'mu', lineartrans(numnode(1), numnode(2), adagrad(1e-1, 1e-8, 'desc'), weidec),...
-        'lnsigsq', lineartrans(numnode(1), numnode(2), adagrad(1e-1, 1e-8, 'desc'), weidec),...
+        'mu', lineartrans(numnode(1), numnode(2), adam(0.9, 0.999, 1e-3, 1e-8, 'desc'), weidec, gpumode),...
+        'lnsigsq', lineartrans(numnode(1), numnode(2), adam(0.9, 0.999, 1e-3, 1e-8, 'desc'), weidec, gpumode),...
         'exp', exptrans(),...
-        'reparam', reparamtrans(numnode(1), L)...
+        'reparam', reparamtrans(numnode(1), L, numbatch, gpumode)...
         );
     
     nets = struct('encnet', encnet, 'encrpm', encrpm, 'decnet', decnet, 'decrpm', decrpm);
@@ -43,18 +63,17 @@ function pretraining_rpsae(datafile, numepoch)
         end
     end
     
-    %% define configuration
-    batchsize = 100;
-    numbatch = floor(N / batchsize);
-    batchidx = zeros(2, 1);
+    %% main loop
     bestprms = nets;
     bestscore = Inf;
-    
-    %% main loop
-    loss_hist = zeros(numepoch, 1);
+    loss_hist = zeros(numepoch, 1, class(data));
             
     for epoch=1:numepoch
+        %profile on
+        tic;
         rndidx = randperm(N);
+        nets.encrpm.reparam.init();
+        nets.decrpm.reparam.init();
         
         for batch=1:numbatch
             batchidx(1) = batchidx(2) + 1;
@@ -62,9 +81,7 @@ function pretraining_rpsae(datafile, numepoch)
             x = data(:, rndidx(batchidx(1):batchidx(2)));
             
             % forward propagation
-            nets.encrpm.reparam.init();
-            nets.decrpm.reparam.init();
-            [loss, nets, output] = fprop(x, nets, weidec);
+            [loss, nets, output] = fprop(x, nets);
             loss_hist(epoch) = loss_hist(epoch) + loss;
             
             % backward propagation
@@ -72,7 +89,7 @@ function pretraining_rpsae(datafile, numepoch)
             nets = bprop(delta, nets);
             
             % gradient checking
-            %gradcheck(x, nets, weidec);
+            %gradcheck(x, nets); pause
             
             % update
             update(nets);
@@ -85,19 +102,30 @@ function pretraining_rpsae(datafile, numepoch)
         end
         
         figure(1); plot(loss_hist(1:epoch)); drawnow;
-        fprintf('epoch %d, loss: %e\n', epoch, loss_hist(epoch));
+        fprintf('epoch %d, loss: %e', epoch, loss_hist(epoch));
         
-        figure(2);
-        I = min(batchsize, 6);
-        for i=1:I
-            subplot(I,1,i); plot(x(:, i)); hold on; plot(output(:, i), 'm-.'); hold off;
-        end
+        figure(2); drawrecon(x, output);
         drawnow;
         
         batchidx = batchidx .* 0;
+        
+        t = toc;
+        fprintf(' [elapsed time %3.3f, %s]\n', t, datestr(datetime('now','TimeZone','local','Format','d-MMM-y HH:mm:ss')));
+        %profile off
+        %profile viewer
     end
     
     savemodel('pretrained.mat', bestprms);
+end
+
+function defaultplot(x, output)
+    I = 6;
+    
+    for i=1:I
+        subplot(I, 1, i);
+        plot(x(:, i)); hold on; 
+        plot(output(:, i), 'm-.'); hold off;
+    end
 end
 
 function savemodel(filename, bestprms)
@@ -146,7 +174,7 @@ function nets = bprop(delta, nets)
     nets = struct('encnet', encnet, 'encrpm', encrpm, 'decnet', decnet, 'decrpm', decrpm);
 end
 
-function [loss, nets, output] = fprop(x, nets, weidec)
+function [loss, nets, output] = fprop(x, nets)
     batchsize = size(x, 2);
     encnet = nets.encnet;
     decnet = nets.decnet;
@@ -189,20 +217,20 @@ function [loss, nets, output] = fprop(x, nets, weidec)
             
             for k=1:length(prmnames)
                 if strcmp('W', prmnames{k})
-                    wreg = wreg + 0.5*weidec.*sum(sum(nets.(netnames{i}).(nodenames{j}).prms.(prmnames{k}).^2));
+                    wreg = wreg + 0.5*nets.(netnames{i}).(nodenames{j}).weidec.*sum(sum(nets.(netnames{i}).(nodenames{j}).prms.(prmnames{k}).^2));
                 end
             end
         end
     end
-
+    
     loss = sum(loss)/batchsize + wreg;
     nets = struct('encnet', encnet, 'encrpm', encrpm, 'decnet', decnet, 'decrpm', decrpm);
 end
 
-function gradcheck(x, nets, weidec)
+function gradcheck(x, nets)
     eps = 1e-6;
-    f = zeros(2, 1);
-    d = zeros(2, 1);
+    f = zeros(2, 1, class(x));
+    d = zeros(2, 1, class(x));
     
     netnames = fieldnames(nets);
     for i=1:length(netnames)
@@ -222,11 +250,11 @@ function gradcheck(x, nets, weidec)
 
                 prm(a, b) = val + eps;
                 nets.(netnames{i}).(nodenames{j}).prms.(prmnames{k}) = prm;
-                f(1) = fprop(x, nets, weidec);
+                f(1) = fprop(x, nets);
                 
                 prm(a, b) = val - eps;
                 nets.(netnames{i}).(nodenames{j}).prms.(prmnames{k}) = prm;
-                f(2) = fprop(x, nets, weidec);
+                f(2) = fprop(x, nets);
 
                 d(1) = (f(1) - f(2))/(2*eps);
                 d(2) = nets.(netnames{i}).(nodenames{j}).grad.(prmnames{k})(a, b);

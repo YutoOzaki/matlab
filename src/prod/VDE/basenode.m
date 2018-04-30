@@ -1,4 +1,4 @@
-classdef (Abstract) basenode < handle
+classdef (Abstract) basenode < matlab.mixin.Copyable
     properties (Abstract)
         input, prms, grad, optm
     end

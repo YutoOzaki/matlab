@@ -9,7 +9,7 @@ classdef rmsprop < optimizer
             obj.r = r;
             obj.a = a;
             obj.e = e;
-            obj.ms = [];
+            obj.ms = struct();
             
             switch dir
                 case 'asc'
@@ -30,7 +30,15 @@ classdef rmsprop < optimizer
         
         function updateval = adjust(obj, grad, prmname)
             obj.ms.(prmname) = obj.r.*obj.ms.(prmname) + (1 - obj.r).*(grad.^2);
-            updateval = obj.dir .* obj.a.*grad./(obj.ms.(prmname) + obj.e);
+            updateval = obj.dir .* obj.a.*grad./(sqrt(obj.ms.(prmname)) + obj.e);
+        end
+        
+        function init(obj, prms)
+            prmnames = fieldnames(prms);
+            
+            for i=1:length(prmnames)
+                obj.ms.(prmnames{i}) = prms.(prmnames{i}).*0;
+            end
         end
         
         function refresh(obj)

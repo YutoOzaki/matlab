@@ -1,4 +1,4 @@
-function loss = fprop(x, nets, lossnode)
+function [loss, x_recon] = fprop(x, nets, lossnode)
     encnet = nets.encnet;
     names = fieldnames(encnet);
     input = x;
@@ -11,7 +11,7 @@ function loss = fprop(x, nets, lossnode)
     zsig = encrpm.exp.forwardprop(encrpm.lnsigsq.forwardprop(input));
     z = encrpm.reparam.forwardprop(struct('mu', zmu, 'sig', zsig));
     
-    L = size(z,3);
+    L = size(z, 3);
     z = reshape(z, [size(z,1), size(z,2)*L]);
     
     decnet = nets.decnet;
@@ -27,6 +27,10 @@ function loss = fprop(x, nets, lossnode)
     
     xmu = reshape(xmu, [size(xmu,1), size(xmu,2)/L, L]);
     xsig = reshape(xsig, [size(xsig,1), size(xsig,2)/L, L]);
+    
+    xmu = mean(xmu, 3);
+    xsig = mean(xsig, 3);
+    x_recon = decrpm.reparam.forwardprop(struct('mu', xmu, 'sig', xsig));
     
     priornet = nets.priornet;
     z = priornet.reparam.forwardprop(struct('mu', zmu, 'sig', zsig));

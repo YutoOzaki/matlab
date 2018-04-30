@@ -1,11 +1,29 @@
-function userscript(numepoch)
+function userscript(datafile, L, numepoch, gpumode, disprecon_helper, dispcluster, displabeling)
+    if ~exist('drawrecon', 'var')
+        disprecon_helper = @defaultplot;
+    end
+    if ~exist('dispcluster', 'var')
+        dispcluster = @dispcluster3D;
+    end
+    if ~exist('displabeling', 'var')
+        displabeling = @displabeling3D;
+    end
+    
     %% load data
-    load('testdata.mat');
+    load(datafile);
     N = size(data, 2);
+    
+    if gpumode
+        data = gpuArray(cast(data, 'single'));
+    end
+    
+    %% define configuration
+    batchsize = 128;
+    numbatch = floor(N / batchsize);
+    batchidx = zeros(2, 1);
     
     %% define model
     nets = struct();
-    L = 1;
     
     load('pretrained.mat');
     netnames = fieldnames(bestprms);
@@ -15,7 +33,7 @@ function userscript(numepoch)
         nodenames = fieldnames(nets.(netnames{i}));
         for j=1:length(nodenames)
             if ~isempty(nets.(netnames{i}).(nodenames{j}).optm)
-                nets.(netnames{i}).(nodenames{j}).setoptm(adagrad(1e-2, 1e-8, 'asc'));
+                nets.(netnames{i}).(nodenames{j}).setoptm(rmsprop(0.9, 1e-3, 1e-8, 'asc'));
             end
         end
     end
@@ -28,51 +46,43 @@ function userscript(numepoch)
         nodenames = fieldnames(nets.(netnames{i}));
         for j=1:length(nodenames)
             if ~isempty(nets.(netnames{i}).(nodenames{j}).optm)
-                nets.(netnames{i}).(nodenames{j}).setoptm(adagrad(1e-4, 1e-8, 'asc'));
+                nets.(netnames{i}).(nodenames{j}).setoptm(rmsprop(0.9, 1e-4, 1e-8, 'asc'));
             end
         end
     end
     
     nets.encrpm.reparam.L =  L;
     nets.priornet.reparam.L = 1;
+    nets.encrpm.reparam.poolsize = batchsize;
+    nets.priornet.reparam.poolsize = batchsize;
+    
     K = nets.priornet.weight.K;
     
     lossnode = lossfun();
     
-    %% define configuration
-    batchsize = 100;
-    numbatch = floor(N / batchsize);
-    batchidx = zeros(2, 1);
-    
     %% main loop
-    loss = zeros(numepoch, 1);
-    label = zeros(N, 1);
-    z = zeros(nets.priornet.weight.J, N);
+    if gpumode
+        loss = zeros(numepoch, 1, 'single', 'gpuArray');
+        labels = zeros(N, 1, 'single', 'gpuArray');
+        z = zeros(nets.priornet.weight.J, N, 'single', 'gpuArray');
+    else
+        loss = zeros(numepoch, 1);
+        labels = zeros(N, 1);
+        z = zeros(nets.priornet.weight.J, N);
+    end
             
     for epoch=1:numepoch
+        tic;
         rndidx = randperm(N);
+        nets.encrpm.reparam.init();
+        nets.priornet.reparam.init();
         
-        if rem(floor(epoch/20), 2) == 0
-                prms_tbu = struct(...
-                    'encnet', nets.encnet,...
-                    'encrpm', nets.encrpm,...
-                    'decnet', nets.decnet,...
-                    'decrpm', nets.decrpm...
-                );
-            else
-                prms_tbu = struct(...
-                    'priornet', nets.priornet...
-                );
-        end
-            
         for batch=1:numbatch
             batchidx(1) = batchidx(2) + 1;
             batchidx(2) = batchidx(1) + batchsize - 1;
             x = data(:, rndidx(batchidx(1):batchidx(2)));
             
             % forward propagation
-            nets.encrpm.reparam.init();
-            nets.priornet.reparam.init();
             loss(epoch) = loss(epoch) + fprop(x, nets, lossnode);
             
             % backward propagation
@@ -83,40 +93,82 @@ function userscript(numepoch)
             
             % update
             update(nets);
-            %update(prms_tbu);
             
             % clustering assignment
             [gam, zt] = posterior(x, nets.encnet, nets.encrpm, nets.priornet);
             [~,I] = max(gam);
-            label(rndidx(batchidx(1):batchidx(2)), 1) = I';
+            labels(rndidx(batchidx(1):batchidx(2)), 1) = I';
             z(:, rndidx(batchidx(1):batchidx(2))) = zt;
         end
         
+        fprintf('epoch %d, loss: %e', epoch, loss(epoch));
         figure(1); plot(loss(1:epoch)); drawnow;
-        fprintf('epoch %d, loss: %e\n', epoch, loss(epoch));
-        
-        c = rand(K, 3);
-        for k=1:K
-            idx = label == k;
-            
-            figure(2);
-            scatter(data(1, idx), data(2, idx), 20, c(k, :)./sum(c(k, :)));hold on
-            
-            figure(3);
-            scatter(z(1, idx), z(2, idx), 20, c(k, :)./sum(c(k, :))); hold on
-            scatter(nets.priornet.weight.prms.eta_mu(1, k), nets.priornet.weight.prms.eta_mu(2, k),...
-                    20, 'MarkerEdgeColor', [0 0 0], 'MarkerFaceColor', [0 .7 .7], 'LineWidth', 2); hold on
-            drawellip(nets.priornet.weight.prms.eta_mu(:, k), diag(exp(nets.priornet.weight.prms.eta_lnsig(:, k)))); hold on
-        end
-        hold off
+        figure(2); displabeling(data, labels);
+        figure(3); dispcluster(z, labels, epoch);
+        figure(4); disprecon(x, nets, lossnode, disprecon_helper);
         drawnow();
         
         batchidx = batchidx .* 0;
+        
+        t = toc;
+        fprintf(' [elapsed time %3.3f, %s]\n', t, datestr(datetime('now','TimeZone','local','Format','d-MMM-y HH:mm:ss')));
     end
     
-    save('vde_clustering_result.mat', 'label');
+    save('vde_clustering_result.mat', 'labels');
 end
 
+function disprecon(x, nets, lossnode, helper)
+    [~, output] = fprop(x, nets, lossnode);
+    
+    helper(x, output);
+end
+
+function defaultplot(x, output)
+    I = 6;
+    
+    for i=1:I
+        subplot(I, 1, i);
+        plot(x(:, i)); hold on; 
+        plot(output(:, i), 'm-.'); hold off;
+    end
+end
+
+function dispcluster3D(rprsn, labels, epoch)
+    elem= unique(labels);
+    K = length(elem);
+    
+    hsv = [linspace(0.0, 0.9, K)', 0.8.*ones(K, 1), 0.75.*ones(K, 1)];
+    c = hsv2rgb(hsv);
+    
+    for k=1:K
+        idx = labels == elem(k);
+        
+        if size(rprsn, 1) > 2
+            z = rprsn(3, idx);
+        else
+            z = zeros(length(find(idx == 1)), 1);
+        end
+        
+        scatter3(rprsn(1, idx), rprsn(2, idx), z, 20, c(k, :)); hold on 
+    end
+    hold off
+    title(epoch);
+end
+
+function displabeling3D(data, labels)
+    elem= unique(labels);
+    K = length(elem);
+    
+    hsv = [linspace(0.0, 0.9, K)', 0.8.*ones(K, 1), 0.75.*ones(K, 1)];
+    c = hsv2rgb(hsv);
+    
+    for k=1:K
+        idx = labels == elem(k);
+        scatter3(data(1, idx), data(2, idx), data(3, idx), 20, c(k, :)); hold on
+    end
+    hold off
+end
+    
 function [gam, z] = posterior(x, encnet, encrpm, priornet)
     names = fieldnames(encnet);
     input = x;

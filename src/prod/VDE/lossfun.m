@@ -71,7 +71,16 @@ classdef lossfun < basenode
             J = size(zmu, 1);
             SAFEDIV = 1e-75; %11e-75 > 1e-90 > 1e-60 > 1e-30
             
-            dgam = zeros(K, batchsize);
+            if isa(x, 'gpuArray')
+                dgam = zeros(K, batchsize, 'single', 'gpuArray');
+                deta_mu = zeros(J, K, batchsize, 'single', 'gpuArray');
+                deta_sig = zeros(J, K, batchsize, 'single', 'gpuArray');
+            else
+                dgam = zeros(K, batchsize);
+                deta_mu = zeros(J, K, batchsize);
+                deta_sig = zeros(J, K, batchsize);
+            end
+            
             for k=1:K
                 buf = log(bsxfun(@rdivide, PI(k), gam(k,:)));
                 idx = buf == Inf;
@@ -88,8 +97,6 @@ classdef lossfun < basenode
             dLdPI = bsxfun(@rdivide, gam, PI);
             dLdPI = sum(dLdPI, 2);
             
-            deta_mu = zeros(J, K, batchsize);
-            deta_sig = zeros(J, K, batchsize);
             for k=1:K
                 A = 2.*bsxfun(@plus, -zmu, eta_mu(:, k));
                 B = bsxfun(@rdivide, A, eta_sig(:, k));

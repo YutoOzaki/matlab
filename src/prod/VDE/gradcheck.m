@@ -1,7 +1,7 @@
 function gradcheck(x, nets, lossnode)
     eps = 1e-6;
-    f = zeros(2, 1);
-    d = zeros(2, 1);
+    f = zeros(2, 1, class(x));
+    d = zeros(2, 1, class(x));
  
     netnames = fieldnames(nets);
     L = length(netnames);

@@ -5,21 +5,30 @@ classdef lineartrans < basenode
     end
     
     methods
-        function obj = lineartrans(J, D, optm, weidec)
-            obj.prms = struct(...
-                'W', zeros(J, D),...
-                'b', zeros(J, 1)...
-            );
-            
-            optm.ms = obj.prms;
-            obj.optm = optm;
+        function obj = lineartrans(J, D, optm, weidec, gpumode)
+            W = zeros(J, D);
+            b = zeros(J, 1);
             
             switch nargin
                 case 3
                     obj.weidec = 0;
                 case 4
                     obj.weidec = weidec;
+                case 5
+                    if gpumode
+                        W = gpuArray(cast(W, 'single'));
+                        b = gpuArray(cast(b, 'single'));
+                        weidec = gpuArray(weidec);
+                    end
+                    obj.weidec = weidec;
             end
+            
+            obj.prms = struct(...
+                'W', W,...
+                'b', b...
+            );
+            
+            obj.optm = optm;
         end
         
         function output = forwardprop(obj, input)
@@ -45,7 +54,15 @@ classdef lineartrans < basenode
         function init(obj)
             [J, D] = size(obj.prms.W);
             r = sqrt(6/(J + D));
-            obj.prms.W = r.*2.*(rand(J, D) - 0.5);
+            W = r.*2.*(rand(J, D) - 0.5);
+            
+            if isa(obj.prms.W, 'gpuArray')
+                W = gpuArray(cast(W, 'single'));
+            end
+            
+            obj.prms.W = W;
+            
+            obj.optm.init(obj.prms);
         end
         
         function update(obj)
@@ -63,8 +80,7 @@ classdef lineartrans < basenode
         
         function setoptm(obj, optm)
             obj.optm = optm;
-            obj.optm.ms = obj.prms;
-            obj.optm.refresh();
+            obj.optm.init(obj.prms);
         end
     end
 end
