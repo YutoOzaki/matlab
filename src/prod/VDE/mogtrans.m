@@ -2,17 +2,26 @@ classdef mogtrans < basenode
     properties
         input, prms, grad, optm
         K, J, gam
-        gpuwrapper
+        gpuwrapper, mvnpdfwrapper
+        
+        SAFEDIV = 1e-12;
+        DECAY = 1;
     end
     
     methods
-        function obj = mogtrans(K, J, gam, optm, gpumode)
+        function obj = mogtrans(K, J, gam, optm, isdiag, gpumode)
             eta_mu = zeros(J, K);
             eta_lnsig = zeros(J, K);
             p = zeros(K, 1);
             
+            if isdiag
+                obj.mvnpdfwrapper = @diagmvnpdf;
+            else
+                obj.mvnpdfwrapper = @mvnpdf;
+            end
+            
             switch nargin
-                case 5
+                case 6
                     if gpumode
                         eta_mu = gpuArray(cast(eta_mu, 'single'));
                         eta_lnsig = gpuArray(cast(eta_lnsig, 'single'));
@@ -50,9 +59,12 @@ classdef mogtrans < basenode
             [~, batchsize] = size(input);
             
             r = obj.gpuwrapper(zeros(obj.K, batchsize));
+            
             for k=1:obj.K
-                r(k, :) = PI(k) .* mvnpdf(input', obj.prms.eta_mu(:, k)', diag(eta_sig(:, k)));
+                r(k, :) = PI(k) .* obj.mvnpdfwrapper(input', obj.prms.eta_mu(:, k)', diag(eta_sig(:, k)));
             end
+            
+            r = r + obj.SAFEDIV;
             
             output = bsxfun(@rdivide, r, sum(r));
         end
@@ -72,14 +84,19 @@ classdef mogtrans < basenode
             
             z_kpdf = obj.gpuwrapper(zeros(obj.K, batchsize));
             for k=1:obj.K
-                z_kpdf(k, :) = mvnpdf(obj.input', eta_mu(:, k)', diag(eta_sig(:, k)))';
+                z_kpdf(k, :) = obj.mvnpdfwrapper(obj.input', eta_mu(:, k)', diag(eta_sig(:, k)))';
             end
             
             dgamdPI = obj.gpuwrapper(zeros(obj.K, obj.K, batchsize));
             dgamdeta_mu = obj.gpuwrapper(zeros(obj.K, obj.K, obj.J, batchsize));
             dgamdeta_sig = obj.gpuwrapper(zeros(obj.K, obj.K, obj.J, batchsize));
             dgamdz = obj.gpuwrapper(zeros(obj.K, obj.J, batchsize));
-            I = sum(bsxfun(@times, PI, z_kpdf));
+            dPIdq = obj.gpuwrapper(zeros(obj.K, obj.K));
+            dqdp = obj.gpuwrapper(zeros(obj.K, obj.K));
+            geta_mu = obj.gpuwrapper(zeros(obj.J, obj.K)) + dLdeta_mu;
+            geta_sig = obj.gpuwrapper(zeros(obj.J, obj.K)) + dLdeta_sig;
+            
+            I = sum(bsxfun(@times, PI, z_kpdf) + obj.SAFEDIV);
             M = bsxfun(@minus, reshape(obj.input, [obj.J,1,batchsize]), eta_mu);
             N = bsxfun(@rdivide, M, eta_sig);
             O = bsxfun(@times, reshape(-PI, [1,obj.K,1]), N);
@@ -87,9 +104,12 @@ classdef mogtrans < basenode
             Q = squeeze(sum(P, 2));
             normalization = I.^2;
             
+            idx = normalization == 0;
+            normalization(idx) = 1e-12;
+            
             for k=1:obj.K
                 idx = setdiff(1:obj.K, k);
-                buf = sum(bsxfun(@times, PI(idx), z_kpdf(idx, :)));
+                buf = sum(bsxfun(@times, PI(idx), z_kpdf(idx, :)) + obj.SAFEDIV);
                 
                 dgamdPI(k, k, :) = z_kpdf(k, :).*buf./normalization;
                 
@@ -109,9 +129,10 @@ classdef mogtrans < basenode
                 dgamdz(k, :, :) = bsxfun(@rdivide, R, normalization);
                 
                 for i=1:(obj.K-1)
-                    dgamdPI(k, idx(i), :) = -PI(k).*z_kpdf(k, :).*z_kpdf(idx(i), :)./normalization;
+                    buf = -PI(k).*z_kpdf(k, :).*z_kpdf(idx(i), :)./normalization;
+                    dgamdPI(k, idx(i), :) = buf;
                     
-                    A = -PI(idx(i)).*z_kpdf(idx(i), :).*PI(k).*z_kpdf(k, :)./normalization;
+                    A = PI(idx(i)).*buf;
                     
                     B = bsxfun(@minus, obj.input, eta_mu(:, idx(i)));
                     C = bsxfun(@rdivide, B, eta_sig(:, idx(i)));
@@ -123,38 +144,29 @@ classdef mogtrans < basenode
                 end
             end
             
-            gPI = obj.gpuwrapper(zeros(obj.K, 1)) + dLdPI;
-            geta_mu = obj.gpuwrapper(zeros(obj.J, obj.K)) + dLdeta_mu;
-            geta_sig = obj.gpuwrapper(zeros(obj.J, obj.K)) + dLdeta_sig;
-            delta = obj.gpuwrapper(zeros(obj.J, batchsize));
-            for n=1:batchsize
-                gPI = gPI + (dLdgam(:, n)' * dgamdPI(:, :, n))';
-                delta(:, n) = (dLdgam(:, n)' * dgamdz(:, :, n))';
-                
-                for k=1:obj.K
-                    buf = squeeze(dgamdeta_mu(:, k, :, n));
-                    geta_mu(:, k) = geta_mu(:, k) + (dLdgam(:, n)' * buf)';
-                    
-                    buf = squeeze(dgamdeta_sig(:, k, :, n));
-                    geta_sig(:, k) = geta_sig(:, k) + (dLdgam(:, n)' * buf)';
-                end
+            dLdgam = reshape(dLdgam, [obj.K, 1, batchsize]);
+            gPI = sum(sum(bsxfun(@times, dLdgam, dgamdPI), 1), 3)' + dLdPI;
+            delta = squeeze(sum(bsxfun(@times, dLdgam, dgamdz), 1));
+            
+            geta_mu = geta_mu';
+            geta_sig = geta_sig';
+            for k=1:obj.K
+                geta_mu(k, :) = geta_mu(k, :) + sum(sum(bsxfun(@times, squeeze(dgamdeta_mu(:, k, :, :)), dLdgam), 3), 1);
+                geta_sig(k, :) = geta_sig(k, :) + sum(sum(bsxfun(@times, squeeze(dgamdeta_sig(:, k, :, :)), dLdgam), 3), 1);
             end
+            geta_mu = geta_mu';
+            geta_sig = geta_sig';
             
             geta_lnsig = geta_sig.*exp(obj.prms.eta_lnsig);
             
-            dPIdq = obj.gpuwrapper(zeros(obj.K, obj.K));
-            dqdp = obj.gpuwrapper(zeros(obj.K, obj.K));
             for i=1:obj.K
-                j = i;
                 idx = setdiff(1:obj.K, i);
                 
-                dPIdq(i, j) = sum(q(idx))+ (obj.K - 1).*obj.gam;
-                dqdp(i, j) =  exp(obj.prms.p(i))*sum(exp(obj.prms.p(idx)));
+                dPIdq(i, i) = sum(q(idx))+ (obj.K - 1).*obj.gam;
+                dqdp(i, i) =  exp(obj.prms.p(i))*sum(exp(obj.prms.p(idx)));
                 
-                for j=1:(obj.K-1)
-                    dPIdq(i, idx(j)) = -q(i) - obj.gam;
-                    dqdp(i, idx(j)) = -exp(obj.prms.p(i) + obj.prms.p(idx(j)));
-                end
+                dPIdq(i, idx) = -q(i) - obj.gam;
+                dqdp(i, idx) = -exp(obj.prms.p(i) + obj.prms.p(idx));
             end
             dqdp = dqdp./sum(exp(obj.prms.p))^2;
             dPIdq = dPIdq./(sum(q) + obj.K*obj.gam)^2;
@@ -191,6 +203,8 @@ classdef mogtrans < basenode
             for l=1:length(prmnames)
                 obj.prms.(prmnames{l}) = obj.prms.(prmnames{l}) + obj.optm.adjust(obj.grad.(prmnames{l}), prmnames{l});
             end
+            
+            obj.SAFEDIV = obj.SAFEDIV*obj.DECAY;
         end
         
         function refresh(obj)

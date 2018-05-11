@@ -27,6 +27,11 @@ classdef lineartrans < basenode
                 'W', W,...
                 'b', b...
             );
+        
+            obj.grad = struct(...
+                'W', W.*0,...
+                'b', b.*0 ...
+            );
             
             obj.optm = optm;
         end
@@ -43,10 +48,8 @@ classdef lineartrans < basenode
             gb = sum(input, 2)./batchsize;
             gW = obj.input * input'./batchsize + obj.weidec.*obj.prms.W';
             
-            obj.grad = struct(...
-                'b', gb,...
-                'W', gW'...
-                );
+            obj.grad.b = gb;
+            obj.grad.W = gW';
             
             delta = obj.prms.W' * input;
         end
@@ -69,7 +72,8 @@ classdef lineartrans < basenode
             prmnames = fieldnames(obj.grad);
             
             for l=1:length(prmnames)
-                obj.prms.(prmnames{l}) = obj.prms.(prmnames{l}) + obj.optm.adjust(obj.grad.(prmnames{l}), prmnames{l});
+                newprm = obj.prms.(prmnames{l}) + obj.optm.adjust(obj.grad.(prmnames{l}), prmnames{l});
+                obj.prms.(prmnames{l}) = newprm;
             end
         end
         

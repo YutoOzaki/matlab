@@ -32,15 +32,19 @@ classdef adam < optimizer
         end
         
         function updateval = adjust(obj, grad, prmname)
-            obj.mg.(prmname) = obj.b1.*obj.mg.(prmname) + (1 - obj.b1).*grad;
-            obj.ms.(prmname) = obj.b2.*obj.ms.(prmname) + (1 - obj.b2).*(grad.^2);
+            newmg = obj.b1.*obj.mg.(prmname) + (1 - obj.b1).*grad;
+            newms = obj.b2.*obj.ms.(prmname) + (1 - obj.b2).*(grad.^2);
             
-            obj.t.(prmname) = obj.t.(prmname) + 1;
+            newt = obj.t.(prmname) + 1;
             
-            mghat = obj.mg.(prmname)./(1 - obj.b1^obj.t.(prmname));
-            mshat = obj.ms.(prmname)./(1 - obj.b2^obj.t.(prmname));
+            mghat = newmg./(1 - obj.b1^newt);
+            mshat = newms./(1 - obj.b2^newt);
             
             updateval = obj.dir .* obj.eta.*mghat./(sqrt(mshat) + obj.e);
+            
+            obj.mg.(prmname) = newmg;
+            obj.ms.(prmname) = newms;
+            obj.t.(prmname) = newt;
         end
         
         function init(obj, prms)

@@ -14,7 +14,7 @@ function fitting_kmeans(datafile, K, L, numepoch, gpumode, dispcluster, displabe
     end
     
     %% load autoencoders and transform the data
-    load('pretrained.mat');
+    load(strcat(datafile, '_pretrained.mat'));
     encnet = bestprms.encnet;
     encrpm = bestprms.encrpm;
     
@@ -25,10 +25,11 @@ function fitting_kmeans(datafile, K, L, numepoch, gpumode, dispcluster, displabe
     
     %% define prior net
     gam = 1;
+    isdiag = true;
     
     priornet = struct(...
         'reparam', reparamtrans(encrpm.reparam.J, L, numbatch, gpumode),...
-        'weight', mogtrans(K, encrpm.reparam.J, gam, rmsprop(0.9, 1e-2, 1e-8, 'asc'), gpumode)...
+        'weight', mogtrans(K, encrpm.reparam.J, gam, rmsprop(0.9, 1e-2, 1e-8, 'asc'), isdiag, gpumode)...
         );
     
     priornet.weight.init();
@@ -52,7 +53,7 @@ function fitting_kmeans(datafile, K, L, numepoch, gpumode, dispcluster, displabe
     
     %% main loop
     for epoch=1:numepoch
-        [idx, C] = kmeans(z', K, 'MaxIter', 1000);
+        [idx, C] = kmeans(z', K, 'MaxIter', 10000);
         
         mu = C';
         for k=1:K
@@ -62,7 +63,7 @@ function fitting_kmeans(datafile, K, L, numepoch, gpumode, dispcluster, displabe
         end
         PI = PI./N;
 
-        loss_hist(epoch) = posterior(z, PI, mu, sig);
+        loss_hist(epoch) = posterior(z, PI, mu, sig, isdiag);
         
         if loss_hist(epoch) > bestscore(1)
             priornet.weight.prms.p = log(PI) - log(sum(exp(PI)));
@@ -88,13 +89,13 @@ function fitting_kmeans(datafile, K, L, numepoch, gpumode, dispcluster, displabe
         fprintf(' [elapsed time %3.3f, %s]\n', t, datestr(datetime('now','TimeZone','local','Format','d-MMM-y HH:mm:ss')));
     end
     
-    savemodel('fit.mat', bestprms);
+    savemodel(strcat(datafile, '_fit.mat'), bestprms);
     
     %% result
     for k=1:K
         sig(:, :, k) = diag(exp(bestprms.priornet.weight.prms.eta_lnsig(:, k)));
     end
-    [loss, q] = posterior(z, bestprms.priornet.weight.getPI(), bestprms.priornet.weight.prms.eta_mu, sig);
+    [loss, q] = posterior(z, bestprms.priornet.weight.getPI(), bestprms.priornet.weight.prms.eta_mu, sig, isdiag);
     
     [~, labels] = max(q);
     figure(2); dispcluster(z, labels, -1); title(sprintf('best score %e (epoch %d, %e)', loss, bestscore(2), bestscore(1)));
@@ -102,10 +103,16 @@ function fitting_kmeans(datafile, K, L, numepoch, gpumode, dispcluster, displabe
     drawnow;
 end
 
-function [loss, q] = posterior(z, PI, mu, sig)
+function [loss, q] = posterior(z, PI, mu, sig, isdiag)
     N = size(z, 2);
     K = length(PI);
     batchsize = 512;
+    
+    if isdiag
+        mvnfun = @diagmvnpdf;
+    else
+        mvnfun = @mvnpdf;
+    end
     
     numbatch = floor(N / batchsize);
     remsize = rem(N, batchsize);
@@ -128,7 +135,7 @@ function [loss, q] = posterior(z, PI, mu, sig)
 
         input = z(:, batchidx(1):batchidx(2));
         for k=1:K
-            r(k, :) = PI(k) .* mvnpdf(input', mu(:, k)', sig(:, :, k));
+            r(k, :) = PI(k) .* mvnfun(input', mu(:, k)', sig(:, :, k));
         end
         q(:, batchidx(1):batchidx(2)) = bsxfun(@rdivide, r, sum(r));
 
@@ -141,7 +148,7 @@ function [loss, q] = posterior(z, PI, mu, sig)
 
     input = z(:, batchidx(1):batchidx(2));
     for k=1:K
-        r_rem(k, :) = PI(k) .* mvnpdf(input', mu(:, k)', sig(:, :, k));
+        r_rem(k, :) = PI(k) .* mvnfun(input', mu(:, k)', sig(:, :, k));
     end
     q(:, batchidx(1):batchidx(2)) = bsxfun(@rdivide, r_rem, sum(r_rem));
 

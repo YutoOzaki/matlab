@@ -3,15 +3,18 @@ function bprop(nets, lossnode)
     L = size(dL.xmu,3);
     %lossnode.localgradcheck();
     
+    dLdx = nets.decrpm.reparam.backwardprop(repmat(dL.x_recon, [1, 1, L])./L);
+    
     priornet = nets.priornet;
     dgam = priornet.weight.backwardprop(dL);
     %deltacheck_gam(lossnode, priornet, L, dgam, 20);
-    dzi = priornet.reparam.backwardprop(dgam);
+    %*try reusing z
+    %*dzi = priornet.reparam.backwardprop(dgam);
     %deltacheck_zi(lossnode, priornet, L, dzi.sig, 20);
     
     decrpm = nets.decrpm;
-    dxmu = decrpm.mu.backwardprop(L.*reshape(dL.xmu, [size(dL.xmu,1), size(dL.xmu,2)*L]));
-    dxsig = decrpm.exp.backwardprop(L.*reshape(dL.xsig, [size(dL.xsig,1), size(dL.xsig,2)*L]));
+    dxmu = decrpm.mu.backwardprop(L.*reshape(dL.xmu, [size(dL.xmu,1), size(dL.xmu,2)*L]) + dLdx.mu);
+    dxsig = decrpm.exp.backwardprop(L.*reshape(dL.xsig, [size(dL.xsig,1), size(dL.xsig,2)*L]) + dLdx.sig);
     dlnxsig = decrpm.lnsigsq.backwardprop(dxsig);
     
     decnet = nets.decnet;
@@ -26,11 +29,15 @@ function bprop(nets, lossnode)
     %dxa = decnet.connect.backwardprop(dxh);
     
     encrpm = nets.encrpm;
+    dxa = dxa + dgam;
     dzl = encrpm.reparam.backwardprop(reshape(dxa, [size(dxa,1), size(dxa,2)/L, L])./L);
     %deltacheck_zl(lossnode, encnet, decnet, L, dzl.sig, 20);
     
-    dzmu = encrpm.mu.backwardprop(dL.zmu + dzi.mu + dzl.mu);
-    dzsig = encrpm.exp.backwardprop(dL.zsig + dzi.sig + dzl.sig);
+    %*try resuing z
+    %*dzmu = encrpm.mu.backwardprop(dL.zmu + dzi.mu + dzl.mu);
+    %*dzsig = encrpm.exp.backwardprop(dL.zsig + dzi.sig + dzl.sig);
+    dzmu = encrpm.mu.backwardprop(dL.zmu + dzl.mu);
+    dzsig = encrpm.exp.backwardprop(dL.zsig + dzl.sig);
     dlnzsig = encrpm.lnsigsq.backwardprop(dzsig);
     
     encnet = nets.encnet;

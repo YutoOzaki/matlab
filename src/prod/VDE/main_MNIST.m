@@ -1,40 +1,41 @@
 function main_MNIST
     loadMNIST();
-    datafile = 'mnistdata.mat';
+    datafile = 'mnistdata';
     K = 10;
     gpumode = true;
     
     %{
-    numepoch = 5;
-    h = [500, 2000, 10];
-    act = {relutrans(), relutrans()};
+    numepoch = 200;
+    h = [500, 500, 2000, 10];
+    act = {relutrans(), relutrans(), relutrans()};
     L = 1;
     pretraining_rpsae(datafile, h, act, L, numepoch, gpumode, @reconMNIST);
     clf
     %}
     
     %{
-    numepoch = 10;
-    L = 1;
+    numepoch = 100;
+    L = 30;
     fitting_kmeans(datafile, K, L, numepoch, gpumode, @disptsne, @displabel);
     clf
     %}
     
     %{
-    numepoch = 5;
+    numepoch = 20;
     L = 1;
     takeover = true;
     fitting_sgd(datafile, K, L, numepoch, gpumode, takeover, @disptsne, @displabel);
     clf
     %}
     
-    numepoch = 3;
+    %%{
+    numepoch = 20;
     L = 1;
-    userscript(datafile, L, numepoch, gpumode, @reconMNIST, @disptsne, @displabel);
+    userscript(datafile, L, numepoch, gpumode, @reconMNIST, @disptsne, @displabel, @() evalMNIST(datafile, gpumode, K));
     clf
+    %}
     
-    load('vde_clustering_result.mat');
-    
+    evalMNIST(datafile, gpumode, K);
 end
 
 function reconMNIST(x, output)
@@ -50,7 +51,7 @@ function reconMNIST(x, output)
 end
 
 function disptsne(rprsn, labels, epoch)
-    if rem(epoch, 15) == 0
+    if rem(epoch, 150) == 0
         dim = 2;
         pcadim = 5;
         perp = 50;

@@ -1,6 +1,7 @@
 classdef lossfun < basenode
     properties
         input, prms, grad, optm
+        w = [0.5 0.5];
     end
     
     methods
@@ -14,6 +15,7 @@ classdef lossfun < basenode
             loss = 0;
             
             x = input.x;
+            x_recon = input.x_recon;
             xmu = input.xmu;
             xsig = input.xsig;
             zmu = input.zmu;
@@ -50,7 +52,8 @@ classdef lossfun < basenode
             loss = loss + sum(gam.*log(A));
 
             loss = loss + 0.5.*sum(log(2*pi.*zsig) + 1);
-
+            loss = obj.w(1).*0.5.*sum((x - x_recon).^2) - obj.w(2).*loss;
+            
             output = sum(loss)/batchsize;
         end
         
@@ -69,7 +72,7 @@ classdef lossfun < basenode
             [~, ~, L] = size(xsig);
             K = length(PI);
             J = size(zmu, 1);
-            SAFEDIV = 1e-75; %11e-75 > 1e-90 > 1e-60 > 1e-30
+            SAFEDIV = 1e-8;
             
             if isa(x, 'gpuArray')
                 dgam = zeros(K, batchsize, 'single', 'gpuArray');
@@ -126,15 +129,18 @@ classdef lossfun < basenode
             A = bsxfun(@rdivide, repmat(reshape(gam, [1,K,batchsize]), [J,1,1]), reshape(eta_sig, [J,K,1]));
             dzsig = -0.5.*squeeze(sum(A,2)) + 1./(2.*zsig);
             
+            dLdx = -(x - obj.input.x_recon);
+            
             delta = struct(...
-                'gam', dgam,...
-                'PI', dLdPI,...
-                'eta_mu', deta_mu,...
-                'eta_sig', deta_sig,...
-                'xmu', dxmu,...
-                'xsig', dxsig,...
-                'zmu', dzmu,...
-                'zsig', dzsig...
+                'gam', -obj.w(2).*dgam,...
+                'PI', -obj.w(2).*dLdPI,...
+                'eta_mu', -obj.w(2).*deta_mu,...
+                'eta_sig', -obj.w(2).*deta_sig,...
+                'x_recon', obj.w(1).*dLdx,...
+                'xmu', -obj.w(2).*dxmu,...
+                'xsig', -obj.w(2).*dxsig,...
+                'zmu', -obj.w(2).*dzmu,...
+                'zsig', -obj.w(2).*dzsig...
                 );
             
             obj.grad = delta;

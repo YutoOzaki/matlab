@@ -1,5 +1,5 @@
-function userscript(datafile, L, numepoch, gpumode, disprecon_helper, dispcluster, displabeling)
-    if ~exist('drawrecon', 'var')
+function userscript(datafile, L, numepoch, gpumode, disprecon_helper, dispcluster, displabeling, evalresult)
+    if ~exist('disprecon_helper', 'var')
         disprecon_helper = @defaultplot;
     end
     if ~exist('dispcluster', 'var')
@@ -7,6 +7,9 @@ function userscript(datafile, L, numepoch, gpumode, disprecon_helper, dispcluste
     end
     if ~exist('displabeling', 'var')
         displabeling = @displabeling3D;
+    end
+    if ~exist('evalresult', 'var')
+        evalresult = @() fprintf('');
     end
     
     %% load data
@@ -25,7 +28,7 @@ function userscript(datafile, L, numepoch, gpumode, disprecon_helper, dispcluste
     %% define model
     nets = struct();
     
-    load('pretrained.mat');
+    load(strcat(datafile, '_pretrained.mat'));
     netnames = fieldnames(bestprms);
     for i=1:length(netnames)
         nets.(netnames{i}) = bestprms.(netnames{i});
@@ -33,34 +36,35 @@ function userscript(datafile, L, numepoch, gpumode, disprecon_helper, dispcluste
         nodenames = fieldnames(nets.(netnames{i}));
         for j=1:length(nodenames)
             if ~isempty(nets.(netnames{i}).(nodenames{j}).optm)
-                nets.(netnames{i}).(nodenames{j}).setoptm(rmsprop(0.9, 1e-3, 1e-8, 'asc'));
+                nets.(netnames{i}).(nodenames{j}).setoptm(rmsprop(0.9, 1e-4, 1e-8, 'desc'));
             end
         end
     end
     
-    load('fit.mat');
-    nodenames = fieldnames(bestprms);
-    for i=1:length(nodenames)
-        nets.(nodenames{i}) = bestprms.(nodenames{i});
+    load(strcat(datafile, '_fit.mat'));
+    netnames = fieldnames(bestprms);
+    for i=1:length(netnames)
+        nets.(netnames{i}) = bestprms.(netnames{i});
         
         nodenames = fieldnames(nets.(netnames{i}));
         for j=1:length(nodenames)
             if ~isempty(nets.(netnames{i}).(nodenames{j}).optm)
-                nets.(netnames{i}).(nodenames{j}).setoptm(rmsprop(0.9, 1e-4, 1e-8, 'asc'));
+                nets.(netnames{i}).(nodenames{j}).setoptm(rmsprop(0.9, 1e-4, 1e-8, 'desc'));
             end
         end
     end
     
-    nets.encrpm.reparam.L =  L;
+    nets.encrpm.reparam.L = L;
+    nets.decrpm.reparam.L = 1;
     nets.priornet.reparam.L = 1;
-    nets.encrpm.reparam.poolsize = batchsize;
-    nets.priornet.reparam.poolsize = batchsize;
-    
-    K = nets.priornet.weight.K;
+    nets.encrpm.reparam.poolsize = numbatch;
+    nets.decrpm.reparam.poolsize = numbatch;
+    nets.priornet.reparam.poolsize = numbatch;
     
     lossnode = lossfun();
     
     %% main loop
+    bestscore = Inf;
     if gpumode
         loss = zeros(numepoch, 1, 'single', 'gpuArray');
         labels = zeros(N, 1, 'single', 'gpuArray');
@@ -70,20 +74,29 @@ function userscript(datafile, L, numepoch, gpumode, disprecon_helper, dispcluste
         labels = zeros(N, 1);
         z = zeros(nets.priornet.weight.J, N);
     end
-            
+    
     for epoch=1:numepoch
         tic;
         rndidx = randperm(N);
         nets.encrpm.reparam.init();
+        nets.decrpm.reparam.init();
         nets.priornet.reparam.init();
         
         for batch=1:numbatch
+            %profile on
             batchidx(1) = batchidx(2) + 1;
             batchidx(2) = batchidx(1) + batchsize - 1;
             x = data(:, rndidx(batchidx(1):batchidx(2)));
             
             % forward propagation
             loss(epoch) = loss(epoch) + fprop(x, nets, lossnode);
+            assert(isnan(loss(epoch)) == 0, 'NaN is occured!');
+            
+            % clustering assignment
+            [gam, zt] = posterior(x, nets.encnet, nets.encrpm, nets.priornet);
+            [~, I] = max(gam);
+            labels(rndidx(batchidx(1):batchidx(2)), 1) = I';
+            z(:, rndidx(batchidx(1):batchidx(2))) = zt;
             
             % backward propagation
             bprop(nets, lossnode);
@@ -94,11 +107,18 @@ function userscript(datafile, L, numepoch, gpumode, disprecon_helper, dispcluste
             % update
             update(nets);
             
-            % clustering assignment
-            [gam, zt] = posterior(x, nets.encnet, nets.encrpm, nets.priornet);
-            [~,I] = max(gam);
-            labels(rndidx(batchidx(1):batchidx(2)), 1) = I';
-            z(:, rndidx(batchidx(1):batchidx(2))) = zt;
+            %profile off
+            %profile viewer
+        end
+        
+        if loss(epoch) < bestscore
+            bestscore = loss(epoch);
+            fprintf('--current best score is updated to %e at epoch %d--\n', bestscore, epoch);
+            bestprms = nets;
+            
+            timestamp = datestr(datetime('now','TimeZone','local','Format','d-MMM-y HH:mm:ss'));
+            savemodel(strcat(datafile, '_vde.mat'), bestprms, timestamp);
+            save(strcat(datafile, '_vde_clustering_result.mat'), 'labels');
         end
         
         fprintf('epoch %d, loss: %e', epoch, loss(epoch));
@@ -106,6 +126,7 @@ function userscript(datafile, L, numepoch, gpumode, disprecon_helper, dispcluste
         figure(2); displabeling(data, labels);
         figure(3); dispcluster(z, labels, epoch);
         figure(4); disprecon(x, nets, lossnode, disprecon_helper);
+        evalresult();
         drawnow();
         
         batchidx = batchidx .* 0;
@@ -113,8 +134,19 @@ function userscript(datafile, L, numepoch, gpumode, disprecon_helper, dispcluste
         t = toc;
         fprintf(' [elapsed time %3.3f, %s]\n', t, datestr(datetime('now','TimeZone','local','Format','d-MMM-y HH:mm:ss')));
     end
+end
+
+function savemodel(filename, bestprms, timestamp)
+    netnames = fieldnames(bestprms);
+    for i=1:length(netnames)
+        nodenames = fieldnames(bestprms.(netnames{i}));
+        
+        for j=1:length(nodenames)
+            bestprms.(netnames{i}).(nodenames{j}).refresh();
+        end
+    end
     
-    save('vde_clustering_result.mat', 'labels');
+    save(filename, 'bestprms', 'timestamp');
 end
 
 function disprecon(x, nets, lossnode, helper)

@@ -66,8 +66,16 @@ function pretraining_rpsae(datafile, h, act, L, numepoch, gpumode, drawrecon)
     %% main loop
     bestprms = nets;
     bestscore = Inf;
-    loss_hist = zeros(numepoch, 1, class(data));
+    if gpumode
+        loss_hist = zeros(numepoch, 1, 'single', 'gpuArray');
+    else
+        loss_hist = zeros(numepoch, 1);
+    end
             
+    devinf = gpuDevice;
+    memrec = zeros(numepoch*numbatch, 1);
+    ii = 1;
+    memrec(ii) = devinf.AvailableMemory;
     for epoch=1:numepoch
         %profile on
         tic;
@@ -81,18 +89,21 @@ function pretraining_rpsae(datafile, h, act, L, numepoch, gpumode, drawrecon)
             x = data(:, rndidx(batchidx(1):batchidx(2)));
             
             % forward propagation
-            [loss, nets, output] = fprop(x, nets);
+            [loss, output] = fprop(x, nets);
             loss_hist(epoch) = loss_hist(epoch) + loss;
             
             % backward propagation
             delta = -(x - output);
-            nets = bprop(delta, nets);
+            bprop(delta, nets);
             
             % gradient checking
             %gradcheck(x, nets); pause
             
             % update
             update(nets);
+            
+            ii = ii + 1;
+            memrec(ii) = devinf.AvailableMemory;
         end
         
         if loss_hist(epoch) < bestscore
@@ -100,11 +111,12 @@ function pretraining_rpsae(datafile, h, act, L, numepoch, gpumode, drawrecon)
             fprintf('--current best score is updated to %e at epoch %d--\n', bestscore, epoch);
             bestprms = nets;
         end
-        
+       
         figure(1); plot(loss_hist(1:epoch)); drawnow;
         fprintf('epoch %d, loss: %e', epoch, loss_hist(epoch));
         
         figure(2); drawrecon(x, output);
+        figure(3); subplot(2,1,1); plot(memrec(1:ii)); subplot(2,1,2); plot(memrec((epoch-1)*numbatch+1:ii));
         drawnow;
         
         batchidx = batchidx .* 0;
@@ -115,7 +127,7 @@ function pretraining_rpsae(datafile, h, act, L, numepoch, gpumode, drawrecon)
         %profile viewer
     end
     
-    savemodel('pretrained.mat', bestprms);
+    savemodel(strcat(datafile, '_pretrained.mat'), bestprms);
 end
 
 function defaultplot(x, output)
@@ -141,67 +153,56 @@ function savemodel(filename, bestprms)
     save(filename, 'bestprms');
 end
 
-function nets = bprop(delta, nets)
-    encnet = nets.encnet;
-    decnet = nets.decnet;
-    encrpm = nets.encrpm;
-    decrpm = nets.decrpm;
-
-    L = decrpm.reparam.L;
-    delta = decrpm.reparam.backwardprop(repmat(delta, [1, 1, L])./L);
-    dxmu = decrpm.mu.backwardprop(delta.mu);
-    dxsig = decrpm.exp.backwardprop(delta.sig);
-    dlnxsig = decrpm.lnsigsq.backwardprop(dxsig);
+function bprop(delta, nets)
+    L = nets.decrpm.reparam.L;
+    delta = nets.decrpm.reparam.backwardprop(repmat(delta, [1, 1, L])./L);
+    dxmu = nets.decrpm.mu.backwardprop(delta.mu);
+    dxsig = nets.decrpm.exp.backwardprop(delta.sig);
+    dlnxsig = nets.decrpm.lnsigsq.backwardprop(dxsig);
     delta = dxmu + dlnxsig;
     
-    names = flipud(fieldnames(decnet));
+    names = flipud(fieldnames(nets.decnet));
     for i=1:length(names)
-        delta = decnet.(names{i}).backwardprop(delta);
+        delta = nets.decnet.(names{i}).backwardprop(delta);
     end
 
-    L = encrpm.reparam.L;
-    delta = encrpm.reparam.backwardprop(repmat(delta, [1, 1, L])./L);
-    dxmu = encrpm.mu.backwardprop(delta.mu);
-    dxsig = encrpm.exp.backwardprop(delta.sig);
-    dlnxsig = encrpm.lnsigsq.backwardprop(dxsig);
+    L = nets.encrpm.reparam.L;
+    delta = nets.encrpm.reparam.backwardprop(repmat(delta, [1, 1, L])./L);
+    dxmu = nets.encrpm.mu.backwardprop(delta.mu);
+    dxsig = nets.encrpm.exp.backwardprop(delta.sig);
+    dlnxsig = nets.encrpm.lnsigsq.backwardprop(dxsig);
     delta = dxmu + dlnxsig;
     
-    names = flipud(fieldnames(encnet));
+    names = flipud(fieldnames(nets.encnet));
     for i=1:length(names)
-        delta = encnet.(names{i}).backwardprop(delta);
+        delta = nets.encnet.(names{i}).backwardprop(delta);
     end
-    
-    nets = struct('encnet', encnet, 'encrpm', encrpm, 'decnet', decnet, 'decrpm', decrpm);
 end
 
-function [loss, nets, output] = fprop(x, nets)
+function [loss, output] = fprop(x, nets)
     batchsize = size(x, 2);
-    encnet = nets.encnet;
-    decnet = nets.decnet;
-    encrpm = nets.encrpm;
-    decrpm = nets.decrpm;
 
     input = x;
-    names = fieldnames(encnet);
+    names = fieldnames(nets.encnet);
     for i=1:length(names)
-        input = encnet.(names{i}).forwardprop(input);
+        input = nets.encnet.(names{i}).forwardprop(input);
     end
     
-    mu = encrpm.mu.forwardprop(input);
-    sigsq = encrpm.exp.forwardprop(encrpm.lnsigsq.forwardprop(input));
-    z = encrpm.reparam.forwardprop(struct('mu', mu, 'sig', sigsq));
+    mu = nets.encrpm.mu.forwardprop(input);
+    sigsq = nets.encrpm.exp.forwardprop(nets.encrpm.lnsigsq.forwardprop(input));
+    z = nets.encrpm.reparam.forwardprop(struct('mu', mu, 'sig', sigsq));
 
     z = mean(z, 3);
     
     input = z;
-    names = fieldnames(decnet);
+    names = fieldnames(nets.decnet);
     for i=1:length(names)
-        input = decnet.(names{i}).forwardprop(input);
+        input = nets.decnet.(names{i}).forwardprop(input);
     end
 
-    mu = decrpm.mu.forwardprop(input);
-    sigsq = decrpm.exp.forwardprop(decrpm.lnsigsq.forwardprop(input));
-    output = decrpm.reparam.forwardprop(struct('mu', mu, 'sig', sigsq));
+    mu = nets.decrpm.mu.forwardprop(input);
+    sigsq = nets.decrpm.exp.forwardprop(nets.decrpm.lnsigsq.forwardprop(input));
+    output = nets.decrpm.reparam.forwardprop(struct('mu', mu, 'sig', sigsq));
     
     output = mean(output, 3);
     
@@ -224,7 +225,6 @@ function [loss, nets, output] = fprop(x, nets)
     end
     
     loss = sum(loss)/batchsize + wreg;
-    nets = struct('encnet', encnet, 'encrpm', encrpm, 'decnet', decnet, 'decrpm', decrpm);
 end
 
 function gradcheck(x, nets)

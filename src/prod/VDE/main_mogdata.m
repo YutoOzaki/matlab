@@ -1,9 +1,9 @@
 function main_mogdata
     K = 10;
-    datafile = 'mogdata.mat';
+    datafile = 'mogdata';
     gpumode = false;
     
-    %%{
+    %{
     N = 8000;
     D = 3;
     [data, truelabels] = mogdata(N, D, K);
@@ -11,32 +11,38 @@ function main_mogdata
     %}
     %load(datafile);
     
-    %%{
-    numepoch = 20;
+    %{
+    numepoch = 5;
     h = [128 128 6];
     act = {relutrans() tanhtrans()};
     L = 1;
     pretraining_rpsae(datafile, h, act, L, numepoch, gpumode);
     clf
+    %}
     
-    numepoch = 100;
+    %{
+    numepoch = 10;
     L = 32;
     fitting_kmeans(datafile, K, L, numepoch, gpumode);
     clf; 
+    %}
     
-    numepoch = 20;
+    %{
+    numepoch = 5;
     L = 1;
     takeover = true;
     fitting_sgd(datafile, K, L, numepoch, gpumode, takeover);
     clf
     %}
     
-    numepoch = 20;
+    %{
+    numepoch = 30;
     L = 1;
     userscript(datafile, L, numepoch, gpumode);
     clf
+    %}
     
-    load('vde_clustering_result.mat');
+    load(strcat(datafile, '_vde_clustering_result.mat'));
     hsv = [linspace(0.0, 0.9, K)', 0.8.*ones(K, 1), 0.9.*ones(K, 1)];
     c = hsv2rgb(hsv);
     

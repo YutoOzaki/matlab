@@ -14,7 +14,7 @@ function fitting_sgd(datafile, K, L, numepoch, gpumode, takeover, dispcluster, d
     end
     
     %% load autoencoders and transform the data
-    load('pretrained.mat');
+    load(strcat(datafile, '_pretrained.mat'));
     encnet = bestprms.encnet;
     encrpm = bestprms.encrpm;
     
@@ -25,27 +25,31 @@ function fitting_sgd(datafile, K, L, numepoch, gpumode, takeover, dispcluster, d
     
     %% define prior net
     if takeover
-        load('fit.mat');
+        load(strcat(datafile, '_fit.mat'));
         priornet = bestprms.priornet;
         priornet.weight.setoptm(rmsprop(0.9, 1e-1, 1e-8, 'asc'));
     else
         J = encrpm.reparam.J;
         gam = 1;
+        isdiag = true;
 
         priornet = struct(...
             'reparam', reparamtrans(J, L, numbatch, gpumode),...
-            'weight', mogtrans(K, J, gam, rmsprop(0.9, 1e-2, 1e-8, 'asc'), gpumode)...
+            'weight', mogtrans(K, J, gam, rmsprop(0.9, 1e-2, 1e-8, 'asc'), isdiag, gpumode)...
             );
 
         priornet.weight.init();
         init(data, encnet, encrpm, priornet);
     end
     
+    priornet.reparam.L = L;
+    
     %% main loop
     loss_hist = zeros(numepoch, 1);
     labels = zeros(N, 1);
     rprsn = zeros(encrpm.reparam.J, N);
     bestscore = -Inf;
+    batchidx = zeros(2, 1);
     
     if gpumode
         loss_hist = gpuArray(cast(loss_hist, 'single'));
@@ -53,9 +57,6 @@ function fitting_sgd(datafile, K, L, numepoch, gpumode, takeover, dispcluster, d
         rprsn = gpuArray(cast(rprsn, 'single'));
         bestscore = gpuArray(cast(bestscore, 'single'));
     end
-    
-    batchidx = zeros(2, 1);
-    bestprms = struct('priornet', priornet);
     
     for epoch=1:numepoch
         %profile on
@@ -82,6 +83,7 @@ function fitting_sgd(datafile, K, L, numepoch, gpumode, takeover, dispcluster, d
             z = mean(z, 3);
             loglik = fprop(priornet, z);
             loss_hist(epoch) = loss_hist(epoch) + loglik;
+            assert(isnan(loss_hist(epoch)) == 0, 'NaN is occured!');
             
             % backward propagation
             priornet = bprop(priornet, z);
@@ -107,6 +109,7 @@ function fitting_sgd(datafile, K, L, numepoch, gpumode, takeover, dispcluster, d
             bestscore = loss_hist(epoch);
             fprintf('--current best score is updated to %e at epoch %d--\n', bestscore, epoch);
             bestprms = struct('priornet', priornet);
+            savemodel(strcat(datafile, '_fit.mat'), bestprms);
         end
         
         figure(1); plot(loss_hist(1:epoch)); drawnow;
@@ -127,8 +130,6 @@ function fitting_sgd(datafile, K, L, numepoch, gpumode, takeover, dispcluster, d
         %profile off
         %profile viewer
     end
-    
-    savemodel('fit.mat', bestprms)
 end
 
 function dispcluster3D(rprsn, labels, epoch)
@@ -228,6 +229,9 @@ function priornet = bprop(priornet, z)
     PI = priornet.weight.getPI();
     J = priornet.weight.J;
     gam = priornet.weight.gam;
+    SAFEDIV = priornet.weight.SAFEDIV;
+    
+    mvnfun = priornet.weight.mvnpdfwrapper;
     
     batchsize = size(z, 2);
 
@@ -248,11 +252,11 @@ function priornet = bprop(priornet, z)
     end
     
     for k=1:K
-        pdf(k, :) = mvnpdf(z', mu(:, k)', diag(sigsq(:, k)));
+        pdf(k, :) = mvnfun(z', mu(:, k)', diag(sigsq(:, k)));
     end
 
     % p
-    A = sum(bsxfun(@times, pdf, PI));
+    A = sum(bsxfun(@times, pdf, PI) + SAFEDIV);
     for k=1:K
         dLdPI(k, 1) = sum(pdf(k, :)./A);
     end
@@ -264,10 +268,8 @@ function priornet = bprop(priornet, z)
         dPIdq(i, j) = sum(q(idx)) + (K - 1).*gam;
         dqdp(i, j) =  exp(p(i))*sum(exp(p(idx)));
 
-        for j=1:(K-1)
-            dPIdq(i, idx(j)) = -q(i) - gam;
-            dqdp(i, idx(j)) = -exp(p(i) + p(idx(j)));
-        end
+        dPIdq(i, idx) = -q(i) - gam;
+        dqdp(i, idx) = -exp(p(i) + p(idx));
     end
     dPIdq = dPIdq./(sum(q) + K*gam)^2;
     dqdp = dqdp./sum(exp(p))^2;
@@ -279,14 +281,14 @@ function priornet = bprop(priornet, z)
         A = bsxfun(@minus, z, mu(:, k));
         B = bsxfun(@rdivide, A, sigsq(:, k));
         C = PI(k) .* pdf(k, :);
-        D = C ./ sum(bsxfun(@times, pdf, PI));
+        D = C ./ sum(bsxfun(@times, pdf, PI) + SAFEDIV);
         dLdmu(:, k) = sum(bsxfun(@times, B, D), 2);
     end
     
     % sig
     for k=1:K
         A = PI(k).*pdf(k, :);
-        B = A./sum(bsxfun(@times, pdf, PI));
+        B = A./sum(bsxfun(@times, pdf, PI) + SAFEDIV);
         
         C = bsxfun(@minus, z, mu(:, k)).^2;
         D = bsxfun(@minus, C, sigsq(:, k));
